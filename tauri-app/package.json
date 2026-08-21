@@ -1,0 +1,12 @@
+{
+  "name": "qa-log-browser",
+  "version": "1.0.0",
+  "description": "QA Log Browser - Desktop GUI for QA records",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11",
+    "@tauri-apps/api": "2.11"
+  }
+}

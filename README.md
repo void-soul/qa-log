@@ -1,117 +1,84 @@
-# QA Log
+# QA Log Skill
 
-Cross-session context preservation for programming Q&A. Logs questions and solutions to `QA.md` in the project root, making every solved problem a searchable reference for future sessions.
+编程问答记录 Skill，数据存储于 SQLite 数据库 `qa.db`。
 
-## Features
+> **v3.0 变更**：数据源由 `QA.md`（Markdown）迁移为 `qa.db`（SQLite 单文件数据库），
+> 位于**使用此 skill 的项目根目录**。脚本与 Tauri 桌面浏览器共用同一个 `qa.db`。
 
-- **Structured 4-section format**: Phenomenon/Requirement, Root Cause, Solution, Files Changed
-- **Multi-question decomposition**: Split one request into independent entries automatically
-- **Token-efficient retrieval**: Scripts read/write entries without loading the entire file
-- **Batch commit support**: Group changes by feature/domain before submitting
+## 快速开始
 
-## Quick Start
+### 在目标项目中初始化（首次使用）
+
+进入你要记录 QA 的项目根目录，一条命令完成建库 + 部署浏览器：
 
 ```bash
-# Log a new question
-python scripts/qa_tool.py append --category "Bug Fix" --question "Save button not responding"
-
-# List all entries
-python scripts/qa_tool.py summary
-
-# Get full entry
-python scripts/qa_tool.py get Q-005
-
-# Update with solution
-python scripts/qa_tool.py update Q-005 \
-  --status "已解决待验证" \
-  --root-cause "Width property set incorrectly" \
-  --answer "1. Modified Width in app.py\n2. Updated MainWindow.xaml" \
-  --files "| File | Change |\n|------|--------|\n| **app.py** | **Width** 250 -> 340 |"
+cd /path/to/project
+python <skill-path>/scripts/qa_tool.py setup
+# 自动创建: qa.db + qa_entries 表
+# 自动复制: bin/QALogBrowser.exe 到当前目录
 ```
 
-## CLI Reference
+### 添加记录
 
-| Command | Args | Description |
-|---------|------|-------------|
-| `summary` | — | List all entries (ID + title) |
-| `get <ID>` | `ID` (e.g., `Q-003` or `3`) | View full entry content |
-| `append` | `-c/--category`, `-q/--question` | Add new entry (auto-increments ID) |
-| `update <ID>` | `-q`, `-s`, `-r`, `-a`, `-f` | Update existing entry |
-| `next-id` | — | Print next available ID |
-| `format` | — | Validate and report QA.md structure issues |
-| `search` | `query`, `-s/--status`, `-c/--category` | Search entries by keyword or filter |
-
-### Update Fields
-
-- `-q/--question`: Overwrites "Phenomenon/Requirement" field
-- `-s/--status`: Status (`Pending` / `已解决待验证` / `已验证` / `WontFix` / `Unresolved`)
-- `-r/--root-cause`: Root cause analysis
-- `-a/--answer`: Solution steps
-- `-f/--files`: Changed files table (`| File | Change |` format)
-
-Literal `\n` in text args expands to real newlines; use `\n` to join multi-line content.
-
-## Encoding (No Mojibake)
-
-All scripts force UTF-8 output:
-```python
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+```bash
+cd /path/to/project
+python <skill-path>/scripts/qa_tool.py append \
+  --category "Bug Fix" \
+  --question "问题描述"
 ```
 
-On Windows, if using CLI directly, run `chcp 65001` first. Prefer Python invocation to avoid encoding issues.
+### 打开浏览器查看
 
-## Sub-Skills
-
-| Skill | Purpose |
-|-------|---------|
-| `qa-log/skills/add-question` | Phase 1: Log a new question |
-| `qa-log/skills/fill-solution` | Phase 3: Fill in solution |
-| `qa-log/skills/check` | Verify a QA entry against source code |
-| `qa-log/skills/format-doc` | Validate and fix QA.md structure |
-| `qa-log/skills/search` | Search historical QA entries |
-| `qa-log/skills/batch-commit` | Batch commit by feature group |
-
-## Entry Structure
-
-```markdown
-## Q-NNN | YYYY-MM-DD | Category | Status
-
-**现象/需求:** [What was observed vs expected]
-
-**根因:** [Why it happened, with `identifiers`]
-
-**解决方案:**
-1. Step one
-2. Step two
-3. Step three
-
-**涉及文件:**
-| File | Change |
-|------|--------|
-| `path/to/file.ext` | What changed: `method/property` value |
-
----
+```bash
+./QALogBrowser.exe
+# 或双击运行；自动读取同目录 qa.db
 ```
 
-## Categories
+## 功能特性
 
-| Category | Use when |
-|----------|----------|
-| Bug Fix | Debugging, error fixes, unexpected behavior |
-| Feature | New functionality, additions |
-| Architecture | System design, module structure, patterns |
-| Refactoring | Code cleanup, optimization, no behavior change |
-| Performance | Speed, memory, resource optimization |
-| Config/Setup | Build, deploy, environment, dependencies |
-| Understanding | Explanations, how-code-works, learning |
-| Other | Anything that doesn't fit above |
+- **GitHub Dark 主题** — 现代化深色 UI
+- **分类图标** — 🐛 Bug Fix, ✨ Feature, 🏗 Architecture 等
+- **状态徽章** — 颜色区分 Pending/已验证/WontFix 等
+- **ASCII 表格** — 涉及文件用框线表格渲染
+- **实时搜索** — 关键词过滤 + 状态/分类筛选
+- **SQLite 存储** — `qa.db` 单文件，零配置，脚本与 GUI 共用
 
-## Status Lifecycle
+## 技术栈
+
+| 组件 | 技术 | 说明 |
+|------|------|------|
+| CLI | Python 3.11 + sqlite3 | 数据存储与命令行 |
+| 桌面客户端 | Tauri (Rust + WebView2) | 浏览器，读取同目录 qa.db |
+| 数据库 | SQLite | 单文件 `qa.db`，零配置 |
+
+## 文件清单
 
 ```
-Pending ──solve──→ 已解决待验证 ──verify──→ 已验证
-    │
-    └──decide not to fix──→ WontFix
-    │
-    └──can't solve──→ Unresolved
+scripts/
+├── qa_tool.py          # CLI 工具 (setup/append/get/summary/update/next-id/format)
+├── search_qa.py        # 高级搜索
+├── gen_commit_msg.py   # 生成 commit message
+└── qa.db               # SQLite 数据库（在使用 skill 的项目根目录生成）
 ```
+
+## Tauri 项目
+
+位于 `tauri-app/`，编译产物 `QALogBrowser.exe` 部署到使用 skill 的项目根目录，
+自动读取同目录 `qa.db` 显示数据。
+
+构建与开发见 [tauri-app/README.md](tauri-app/README.md)。
+
+## 架构
+
+```
+使用 skill 的项目根目录/
+├── qa.db               # SQLite 数据库（qa_entries 表）
+└── QALogBrowser.exe    # Tauri 桌面浏览器（读取同目录 qa.db）
+
+skill 目录/
+├── SKILL.md            # 技能入口
+├── scripts/qa_tool.py  # agent 使用的 CLI
+└── tauri-app/          # 桌面浏览器源码
+```
+
+核心原则：**每个解决的问题都成为可搜索的参考。**

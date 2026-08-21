@@ -1,7 +1,7 @@
 ---
 name: qa-log-check
-description: "Check and verify a QA entry. When user says '请检查Q-XXX', extract the entry, analyze the solution against the problem, and verify correctness."
-version: 1.5.0
+description: "Check and verify a QA entry in qa.db. When user says '请检查Q-XXX', extract the entry, analyze the solution against the problem, and verify correctness."
+version: 2.0.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -13,7 +13,9 @@ metadata:
 
 # QA Check Entry
 
-当用户说 "请检查Q-XXX" 或类似请求时，提取QA条目并进行彻底的代码审查，验证解决方案是否真正解决问题且没有引入新问题。**检查完成后必须格式化QA文档**。
+当用户说 "请检查Q-XXX" 或类似请求时，从 `qa.db` 提取QA条目并进行彻底的代码审查，验证解决方案是否真正解决问题且没有引入新问题。**检查完成后必须运行 `format` 校验条目结构**。
+
+> **v2.0**：数据源由 `QA.md` 改为 `qa.db`（SQLite），位于**项目根目录**。运行脚本前先 `cd <project-root>`。
 
 ## What to Do
 
@@ -80,20 +82,19 @@ cd <project-root> && python scripts/qa_tool.py update <ID> --status "已解决�
 cd <project-root> && python scripts/qa_tool.py update <ID> --status "Pending"
 ```
 
-### Step 7: Format QA Document (MANDATORY)
+### Step 7: Format QA Entry (MANDATORY)
 
-**必须格式化QA文档**，确保：
+**必须校验 qa.db 条目结构**，确保：
 - 引用代码、文件的地方使用 **粗体** 包裹（不是反引号）
 - 多步骤解决方案使用有序列表 `1. 2. 3.`
 - 表格格式正确（`涉及文件` 部分）
-- 条目之间有空行分隔
-- 标题格式一致
+- 状态值合法（`Pending` / `已解决待验证` / `已验证` / `WontFix` / `Unresolved`）
 
 ```bash
 cd <project-root> && python scripts/qa_tool.py format
 ```
 
-**如果格式检查发现问题，必须手动修复QA.md**。
+**如果校验发现问题，必须通过 `qa_tool.py update` 修复对应条目**。
 
 ### Step 8: Ask for Commit (CRITICAL)
 

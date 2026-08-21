@@ -1,94 +1,96 @@
-# QA.md Template and Entry Format
+# qa.db Schema and Entry Format
 
-## New QA.md Template
+v3.0 起数据源从 `QA.md`（Markdown）迁移为 `qa.db`（SQLite 单文件数据库）。
 
-When `QA.md` does not exist in the project root, create it with this content:
+## 文件位置
 
-```markdown
-# QA Log
+`qa.db` 位于**使用此 skill 的项目根目录**（脚本默认读写 `./qa.db`），不在 skill 目录内。
 
-编程问答记录，按时间倒序排列。
+## 表结构
 
----
-
+```sql
+CREATE TABLE IF NOT EXISTS qa_entries (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    qid        TEXT UNIQUE NOT NULL,      -- e.g. Q-001
+    date       TEXT NOT NULL,             -- YYYY-MM-DD
+    category   TEXT NOT NULL,             -- Bug Fix / Feature / ...
+    status     TEXT NOT NULL DEFAULT 'Pending',
+    phenomenon TEXT NOT NULL,             -- 现象/需求
+    root_cause TEXT DEFAULT '',           -- 根因
+    solution   TEXT DEFAULT '',           -- 解决方案
+    files      TEXT DEFAULT '',           -- 涉及文件 (markdown table)
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
 ```
 
-The `scripts/qa_tool.py` auto-creates this header on first `append`. No manual creation needed.
+由 `scripts/qa_tool.py setup` 自动创建（幂等，已存在则跳过）。
 
-## Entry Format
+## Entry 渲染格式
 
-Each entry follows this structure (blank lines between sections for readability):
+`qa_tool.py get <ID>` 以如下 markdown 风格渲染单条记录：
 
 ```markdown
 ## Q-NNN | YYYY-MM-DD | Category | Status
 
 **现象/需求:** [Restated problem or requirement]
 
-**根因:** [Why the bug occurred — with `identifiers`]
+**根因:** [Why the bug occurred — with identifiers]
 
 **解决方案:**
-1. [Step 1 — what was done, with specific `names` and `values`]
-2. [Step 2 — what was done, with specific `names` and `values`]
-3. [Step 3 — ...]
+1. [Step 1 — what was done, with specific names and values]
+2. [Step 2 — what was done, with specific names and values]
 
 **涉及文件:**
 | File | Change |
 |------|--------|
-| `path/to/file.ext` | What was changed: `method/property` value |
-| `path/to/file2.ext` | What was changed: `method/property` value |
-
----
+| path/to/file.ext | What was changed: method/property value |
 ```
 
 ### Formatting Rules
 
 1. **Ordered lists** for solution steps — use `1.`, `2.`, `3.` format
-2. **Backticks** around file identifiers: `BlotEyes.Player/MainWindow.xaml`
-3. **Backticks** around property/method/values: `Width`, `250 → 340`, `InitializeComponent()`
+2. **Bold** around file identifiers: **BlotEyes.Player/MainWindow.xaml**（不用反引号）
+3. **Bold** around property/method/values: **Width**, **250 → 340**, **InitializeComponent()**
 4. **Table format** for files — never a flat list
-5. **No `—` placeholders** when content exists
+5. **No placeholders** when content exists
 
 ### Field Descriptions
 
 | Field | Description |
 |-------|-------------|
-| `Q-NNN` | Incrementing ID, zero-padded to 3 digits |
-| `YYYY-MM-DD` | Date the question was asked |
-| `Category` | From the Categories table in SKILL.md |
-| **现象/需求** | The problem or requirement — restated in organized form |
-| **根因** | Why the bug occurred — trace the code path, use `identifiers` |
-| **解决方案** | Ordered list of steps taken, with specific `names` and `values` |
-| **涉及文件** | Table with file path and what was changed in each file |
+| `qid` / `Q-NNN` | Incrementing ID, zero-padded to 3 digits |
+| `date` / `YYYY-MM-DD` | Date the question was asked |
+| `category` | From the Categories table in SKILL.md |
+| **现象/需求** (`phenomenon`) | The problem or requirement — restated in organized form |
+| **根因** (`root_cause`) | Why the bug occurred — trace the code path, use identifiers |
+| **解决方案** (`solution`) | Ordered list of steps taken, with specific names and values |
+| **涉及文件** (`files`) | Table with file path and what was changed in each file |
 
 ## Complete Example (Real-World)
 
-Below is a full entry with the level of detail expected when logging a resolved issue:
-
 ```markdown
-## Q-039 | 2024-01-15 | Bug Fix | Resolved
+## Q-039 | 2026-01-15 | Bug Fix | 已验证
 
 **现象/需求:** 播放端左侧工具栏宽度与录制端不一致，播放端视频预览区域被压缩
 
-**根因:** 播放端和录制端是两个独立项目，初始开发时分别设置了不同的左栏宽度（播放端 `250`，录制端 `340`），导致界面元素对齐不一致
+**根因:** 播放端和录制端是两个独立项目，初始开发时分别设置了不同的左栏宽度（播放端 **250**，录制端 **340**），导致界面元素对齐不一致
 
 **解决方案:**
-1. 在 `BlotEyes.Player/MainWindow.xaml` 中定位左侧面板的 `ColumnDefinition`
-2. 将主网格左列 `Width="250"` 改为 `Width="340"`
-3. 将非客户端区标题列 `Width="250"` 改为 `Width="340"`
-4. 与录制端 `BlotEyes.Recorder/MainWindow.xaml` 的左栏宽度对齐
+1. 在 **BlotEyes.Player/MainWindow.xaml** 中定位左侧面板的 **ColumnDefinition**
+2. 将主网格左列 **Width="250"** 改为 **Width="340"**
+3. 将非客户端区标题列 **Width="250"** 改为 **Width="340"**
+4. 与录制端 **BlotEyes.Recorder/MainWindow.xaml** 的左栏宽度对齐
 
 **涉及文件:**
 | File | Change |
 |------|--------|
-| `BlotEyes.Player/MainWindow.xaml` | 左栏 `ColumnDefinition` `Width="250"` → `"340"`（两处：主网格左列 + 非客户端区标题列） |
-
----
+| **BlotEyes.Player/MainWindow.xaml** | 左栏 **ColumnDefinition** **Width="250"** → **"340"**（两处：主网格左列 + 非客户端区标题列） |
 ```
 
 ## What NOT to do (Bad Example — Too Vague)
 
 ```markdown
-## Q-039 | 2024-01-15 | Bug Fix | Resolved
+## Q-039 | 2026-01-15 | Bug Fix | 已验证
 
 **现象/需求:** 播放端左侧工具栏宽度与录制端不一致
 
@@ -97,65 +99,17 @@ Below is a full entry with the level of detail expected when logging a resolved 
 **解决方案:** 改了宽度
 
 **涉及文件:** BlotEyes.Player/MainWindow.xaml
-
----
 ```
 
 **What's wrong:**
 - 根因 too vague — doesn't specify which property or value caused the issue
 - 解决方案 is NOT an ordered list, no specific values, no method/property names
-- 涉及文件 is NOT a table, no Change column, no backtick identifiers
-
-## Multi-File Feature Entry
-
-```markdown
-## Q-040 | 2024-01-16 | Feature | Resolved
-
-**现象/需求:** 新增键盘快捷键用于相机源切换
-
-**根因:** 当前只能通过 UI 按钮切换相机源，无快捷键支持
-
-**解决方案:**
-1. 在 `LangService.cs` 中添加 `Hotkey_Source_Toggle` 词条，值为"源切换"
-2. 在 `HotkeySettingsDialog.cs` 中添加源切换键的 UI 绑定区域
-3. 在 `HotkeyService.cs` 中注册 `Ctrl+Shift+S` 为默认快捷键
-4. 重构 `HotkeyService` 支持 per-camera 快捷键注册
-
-**涉及文件:**
-| File | Change |
-|------|--------|
-| `BlotEyes.Lang/LangService.cs` | 添加 `Hotkey_Source_Toggle` 词条 |
-| `BlotEyes.Hotkeys/HotkeySettingsDialog.cs` | 新增源切换键的 UI 绑定区域 |
-| `BlotEyes.Hotkeys/HotkeyService.cs` | 支持 per-camera 快捷键注册 |
-
----
-```
-
-## Discussion-Only Entries
-
-```markdown
-## Q-041 | 2024-01-16 | Understanding | Resolved
-
-**现象/需求:** 本项目中间件链的工作方式
-
-**根因:** N/A（知识性问题）
-
-**解决方案:**
-1. 解释了 4-中间件管道：`auth` → `rate-limit` → `validate` → `handler`
-2. 每个中间件调用 `next()` 传递到下一个
-
-**涉及文件:**
-| File | Change |
-|------|--------|
-| N/A | 纯讨论，无代码修改 |
-
----
-```
+- 涉及文件 is NOT a table, no Change column, no bold identifiers
 
 ## Files Table Guidelines
 
 - **One row per file** — list every file that was modified
-- **Change column** — briefly state what was changed in this file, with `identifiers`
-- File paths wrapped in backticks
+- **Change column** — briefly state what was changed in this file, with identifiers
+- File paths in **bold**
 - If many files share the same change pattern, list each separately for clarity
 - For discussion-only entries, use N/A row

@@ -1,7 +1,7 @@
 ---
 name: qa-log-search
-description: "搜索QA条目。当用户需要查找历史问题时使用，支持按ID、关键词、状态、类别筛选。"
-version: 1.0.0
+description: "搜索 qa.db 中的 QA 条目。当用户需要查找历史问题时使用，支持按ID、关键词、状态、类别筛选。"
+version: 2.0.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -14,6 +14,8 @@ metadata:
 # QA Log Search — 搜索历史QA条目
 
 当用户需要查找、回顾或引用历史QA记录时使用此技能。
+
+> **v2.0**：数据源由 `QA.md` 改为 `qa.db`（SQLite），位于**项目根目录**。运行脚本前先 `cd <project-root>`。
 
 ## 触发条件
 
@@ -36,93 +38,9 @@ cd <project-root> && python scripts/qa_tool.py summary
 cd <project-root> && python scripts/qa_tool.py next-id
 ```
 
-### 高级搜索（Python脚本）
+### 高级搜索（search_qa.py）
 
-创建搜索脚本 `scripts/search_qa.py`：
-
-```python
-#!/usr/bin/env python3
-"""搜索QA.md条目"""
-import argparse
-import re
-import sys
-from datetime import datetime
-
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-QA_MD = "QA.md"
-
-def read_qa_md():
-    if not os.path.exists(QA_MD):
-        return ""
-    with open(QA_MD, "r", encoding="utf-8") as f:
-        return f.read()
-
-def search_entries(content, query=None, status=None, category=None, limit=10):
-    """搜索条目"""
-    entries = []
-    pattern = re.compile(r'^## (Q-\d+) \| (\d{4}-\d{2}-\d{2}) \| (.+?) \| (\w+)\n\n(.*?)(?=\n---\n|\Z)', re.DOTALL | re.MULTILINE)
-    
-    for match in pattern.finditer(content):
-        qid, date, cat, stat, body = match.groups()
-        
-        # 过滤条件
-        if status and stat != status:
-            continue
-        if category and category.lower() not in cat.lower():
-            continue
-        if query:
-            # 在标题和内容中搜索
-            title_match = query.lower() in qid.lower() or query.lower() in body.lower()
-            if not title_match:
-                continue
-        
-        entries.append({
-            'id': qid,
-            'date': date,
-            'category': cat.strip(),
-            'status': stat.strip(),
-            'body': body.strip()[:200] + '...' if len(body) > 200 else body.strip()
-        })
-        
-        if len(entries) >= limit:
-            break
-    
-    return entries
-
-def main():
-    parser = argparse.ArgumentParser(description="Search QA entries")
-    parser.add_argument("query", nargs="?", help="Search query (keyword or Q-ID)")
-    parser.add_argument("-s", "--status", help="Filter by status")
-    parser.add_argument("-c", "--category", help="Filter by category")
-    parser.add_argument("-n", "--limit", type=int, default=10, help="Max results")
-    
-    args = parser.parse_args()
-    
-    content = read_qa_md()
-    if not content:
-        print("QA.md not found.")
-        return
-    
-    results = search_entries(content, args.query, args.status, args.category, args.limit)
-    
-    if not results:
-        print("No matching entries found.")
-        return
-    
-    print(f"Found {len(results)} entries:\n")
-    for r in results:
-        print(f"## {r['id']} | {r['date']} | {r['category']} | {r['status']}")
-        print(f"{r['body'][:100]}...")
-        print("---")
-
-if __name__ == "__main__":
-    import os
-    main()
-```
-
-### 搜索命令
+使用 `scripts/search_qa.py` 按关键词、状态、类别筛选：
 
 ```bash
 # 按关键词搜索
@@ -136,6 +54,9 @@ cd <project-root> && python scripts/search_qa.py --category Bug
 
 # 组合筛选
 cd <project-root> && python scripts/search_qa.py --status Pending --category Bug
+
+# 限制结果数量
+cd <project-root> && python scripts/search_qa.py 保存 -n 20
 ```
 
 ## 输出格式
@@ -143,11 +64,11 @@ cd <project-root> && python scripts/search_qa.py --status Pending --category Bug
 ```
 Found 3 entries:
 
-## Q-029 | 2024-01-15 | Bug Fix | 已验证
+## Q-029 | 2026-08-02 | Bug Fix | 已验证
 修改了 **app.py** 中的 **Width** 属性...
 ---
 
-## Q-030 | 2024-01-16 | Feature | 已解决待验证
+## Q-030 | 2026-08-03 | Feature | 已解决待验证
 新增导出功能...
 ---
 ```
@@ -158,3 +79,4 @@ Found 3 entries:
 2. **大小写不敏感**：搜索时忽略大小写
 3. **模糊匹配**：支持部分关键词匹配
 4. **结果限制**：默认返回10条，可通过 `-n` 参数调整
+5. **若 qa.db 不存在**：先运行 `python scripts/qa_tool.py setup`

@@ -1,7 +1,7 @@
 ---
 name: qa-log-fill-solution
-description: "Fill in the solution for a QA entry (Phase 3). Use after solving a problem to record root cause, solution steps, and modified files."
-version: 1.2.0
+description: "Fill in the solution for a QA entry (Phase 3). Use after solving a problem to record root cause, solution steps, and modified files in qa.db."
+version: 2.0.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -13,7 +13,9 @@ metadata:
 
 # Fill QA Solution Entry
 
-Phase 3 of the qa-log workflow. Records the solution into an existing QA entry.
+Phase 3 of the qa-log workflow. Records the solution into an existing QA entry in `qa.db`.
+
+> **v2.0**：数据源由 `QA.md` 改为 `qa.db`（SQLite），位于**项目根目录**。运行脚本前先 `cd <project-root>`。
 
 ## When to Use
 

@@ -9,6 +9,8 @@ Class-level skills should have a flat structure with sub-skills nested in a `ski
 ```
 ~/.agents/skills/<skill-name>/
 ├── SKILL.md                    # Main entry point (thin, ~50 lines)
+├── bin/                        # Compiled desktop exe (distributed with skill)
+│   └── <app>.exe
 ├── scripts/                    # Tooling/scripts
 │   └── <tool>.py
 ├── references/                 # Reference docs
@@ -18,6 +20,9 @@ Class-level skills should have a flat structure with sub-skills nested in a `ski
     ├── sub-skill-b.md
     └── sub-skill-c.md
 ```
+
+`bin/` 存放随 skill 分发的编译产物（如桌面浏览器 exe）。首次使用时，
+`scripts/qa_tool.py setup` 会从 `bin/` 复制 exe 到使用该 skill 的项目根目录。
 
 ## Rules
 
@@ -32,6 +37,7 @@ For qa-log:
 ```
 ~/.agents/skills/qa-log/
 ├── SKILL.md                    # Main docs
+├── bin/QALogBrowser.exe        # 桌面浏览器 exe（部署到项目根目录）
 ├── scripts/qa_tool.py
 └── skills/
     ├── add-question.md
@@ -44,6 +50,7 @@ Hermes loads from:
 ```
 ~/AppData/Local/hermes/skills/software-development/qa-log/
 ├── SKILL.md
+├── bin/QALogBrowser.exe
 ├── scripts/qa_tool.py
 └── skills/
     ├── add-question.md

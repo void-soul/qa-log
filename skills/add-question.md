@@ -1,7 +1,7 @@
 ---
 name: qa-log-add-question
-description: "Add a new question entry to QA.md. Use when the user asks a programming question or requests a code change — this is Phase 1 of the qa-log workflow."
-version: 1.2.0
+description: "Add a new question entry to qa.db. Use when the user asks a programming question or requests a code change — this is Phase 1 of the qa-log workflow."
+version: 2.0.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -13,7 +13,9 @@ metadata:
 
 # Add QA Question Entry
 
-Phase 1 of the qa-log workflow. Logs a new question to `QA.md` with `Pending` status.
+Phase 1 of the qa-log workflow. Logs a new question to `qa.db` (SQLite) with `Pending` status.
+
+> **v2.0**：数据源由 `QA.md` 改为 `qa.db`（SQLite），位于**项目根目录**。运行脚本前先 `cd <project-root>`。
 
 ## When to Use
 
@@ -25,7 +27,11 @@ Phase 1 of the qa-log workflow. Logs a new question to `QA.md` with `Pending` st
 Use the `terminal` tool to run the following commands:
 
 ### Step 1: Determine project root
-Find where `QA.md` lives in the current project. Check if there's already a `QA.md` in the project directory.
+项目根目录即存放 `qa.db` 的目录。若该目录还没有 `qa.db`，先初始化（只需一次）：
+```bash
+cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
+```
+`setup` 会创建 `qa.db` + 表结构，并把 `QALogBrowser.exe` 复制到项目根目录。
 
 ### Step 2: Decompose (if needed)
 If the user's request has multiple distinct sub-questions, you will create multiple entries.

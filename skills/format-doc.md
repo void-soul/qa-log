@@ -1,7 +1,7 @@
 ---
 name: qa-log-format-doc
-description: "Validate and reformat QA.md to ensure consistent structure and proper Markdown preview rendering."
-version: 1.1.0
+description: "Validate qa.db entries to ensure consistent structure. Use the qa_tool.py format subcommand to check status values, required fields, and files table format."
+version: 2.0.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -13,41 +13,41 @@ metadata:
 
 # Format QA Document
 
-Validates and rewrites QA.md entries to ensure consistent structure and proper Markdown rendering.
+校验 `qa.db` 中条目结构的一致性与合法性。
+
+> **v2.0**：数据源由 `QA.md` 改为 `qa.db`（SQLite），位于**项目根目录**。运行脚本前先 `cd <project-root>`。
 
 ## When to Use
 
-- QA.md preview is broken or messy in the IDE/editor
-- After multiple agents have edited QA.md and structure is inconsistent
-- Periodic cleanup pass on the QA log
-- **Mandatory after checking a QA entry** (Step 7 of qa-log-check)
+- qa.db 条目结构不一致或疑似损坏
+- 多个 agent 编辑过 qa.db，需要一致性检查
+- 定期清理 QA 记录
+- **检查一个 QA 条目后必须运行**（qa-log-check 的 Step 7）
 
 ## What to Do
 
 Use the `terminal` tool:
 
 ### Step 1: Navigate to project root
-Find the directory containing `QA.md`.
+项目根目录即存放 `qa.db` 的目录。
 
-### Step 2: Run the formatter
+### Step 2: Run the validator
 ```bash
 cd <project-root> && python scripts/qa_tool.py format
 ```
 
 ### Step 3: Verify output
-- If valid: `Formatted N entries`
-- If issues: Lists each issue found
+- 若无问题：`Validated N entries — all valid`
+- 若有问题：逐条列出 issue
 
 ### Step 4: Fix issues if any
-If the formatter reports issues, manually edit QA.md to fix them.
+若校验发现问题，通过 `qa_tool.py update <ID>` 修复对应条目（修正状态值、补全字段、修正表格格式）。
 
-## What It Fixes
+## What It Validates
 
-- Missing blank lines between sections
-- Inconsistent formatting around identifiers
-- Malformed tables in 涉及文件 section
-- Mixed newline styles (CRLF vs LF)
-- Trailing whitespace and inconsistent spacing
+- 状态值是否为合法集合：`Pending` / `已解决待验证` / `已验证` / `WontFix` / `Unresolved`
+- `现象/需求`（phenomenon）是否为空
+- `涉及文件`（files）是否为空，若存在是否以 `|` 开头的 markdown 表格
 
 ## Format Requirements (MANDATORY)
 
@@ -84,32 +84,14 @@ If the formatter reports issues, manually edit QA.md to fix them.
 | **MainWindow.xaml** | 更新列宽设置 |
 ```
 
-### 4. 条目分隔
-
-**每个条目后必须有 `---` 分隔线：**
-```markdown
-## Q-001 | 2024-01-15 | Bug Fix | 已验证
-
-**现象/需求:** ...
-**根因:** ...
-**解决方案:** ...
-**涉及文件:** ...
-
----
-
-## Q-002 | 2024-01-15 | Bug Fix | Pending
-...
-```
-
 ## Manual Format Check
 
-Verify each entry has:
-- Blank line after header line
-- Blank line after each bold field label
-- Ordered list for solution steps (1. 2. 3.)
-- Table format for files (never flat list)
-- `---` separator after each entry
-- **Bold** for code/file references (not backticks)
+每条记录应满足：
+- 状态值合法
+- `现象/需求` 非空
+- 解决方案使用有序列表 `1. 2. 3.`
+- `涉及文件` 使用表格（不为空时）
+- 代码/文件引用使用 **粗体**（不用反引号）
 
 ## Example
 
@@ -119,12 +101,12 @@ cd /path/to/project && python scripts/qa_tool.py format
 
 Output:
 ```
-Formatted 15 entries — all valid
+Validated 15 entries — all valid
 ```
 
 Or if issues found:
 ```
 Found 2 issue(s):
-  - Q-005: Header format issue
-  - Q-012: Invalid status 'OLD_STATUS'
+  - Q-005: Invalid status 'OLD_STATUS'
+  - Q-012: phenomenon (现象/需求) is empty
 ```

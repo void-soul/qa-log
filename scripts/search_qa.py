@@ -1,109 +1,90 @@
 #!/usr/bin/env python3
-"""搜索QA.md条目"""
+"""搜索 qa.db 中的 QA 条目。"""
 import argparse
 import os
-import re
+import sqlite3
 import sys
 
-# 强制UTF-8
+# 强制 UTF-8
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-if hasattr(sys.stdin, "reconfigure"):
-    sys.stdin.reconfigure(encoding="utf-8")
+DB_NAME = "qa.db"
 
-QA_MD = "QA.md"
 
-def read_qa_md():
-    """读取QA.md"""
-    if not os.path.exists(QA_MD):
-        return ""
-    with open(QA_MD, "r", encoding="utf-8") as f:
-        return f.read()
+def resolve_db_path(explicit=None):
+    """默认读取当前工作目录（项目根目录）的 qa.db。"""
+    if explicit:
+        return explicit
+    return os.path.join(os.getcwd(), DB_NAME)
 
-def search_entries(content, query=None, status=None, category=None, limit=10):
-    """搜索条目"""
-    entries = []
-    
-    # 匹配条目头部
-    header_pattern = re.compile(r'^## (Q-\d+) \| (\d{4}-\d{2}-\d{2}) \| (.+?) \| (\w+)', re.MULTILINE)
-    separator_pattern = re.compile(r'^---$', re.MULTILINE)
-    
-    headers = list(header_pattern.finditer(content))
-    separators = list(separator_pattern.finditer(content))
-    
-    for i, header in enumerate(headers):
-        qid = header.group(1)
-        date = header.group(2)
-        cat = header.group(3).strip()
-        stat = header.group(4).strip()
-        
-        # 获取条目内容范围
-        start = header.start()
-        end = separators[i].start() if i < len(separators) else len(content)
-        body = content[start:end]
-        
-        # 过滤条件
-        if status and stat != status:
-            continue
-        if category and category.lower() not in cat.lower():
-            continue
-        if query:
-            query_lower = query.lower()
-            # 在QID、类别、状态中搜索
-            id_match = query_lower in qid.lower()
-            cat_match = query_lower in cat.lower()
-            stat_match = query_lower in stat.lower()
-            # 在正文中搜索（去除markdown格式）
-            body_clean = re.sub(r'\*\*', '', body)  # 去除粗体标记
-            body_match = query_lower in body_clean.lower()
-            
-            if not (id_match or cat_match or stat_match or body_match):
-                continue
-        
-        # 提取现象/需求作为摘要
-        phenomenon_match = re.search(r'\*\*现象/需求:\*\*\s*(.+?)(?:\n|$)', body, re.DOTALL)
-        summary = phenomenon_match.group(1).strip()[:80] + '...' if phenomenon_match else '...'
-        
-        entries.append({
-            'id': qid,
-            'date': date,
-            'category': cat,
-            'status': stat,
-            'summary': summary,
-            'raw': body
-        })
-        
-        if len(entries) >= limit:
-            break
-    
-    return entries
+
+def connect(db_path=None):
+    path = resolve_db_path(db_path)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def search_entries(conn, query=None, status=None, category=None, limit=10):
+    """在 qa.db 中搜索条目，支持关键词/状态/类别过滤。"""
+    clauses = []
+    params = []
+
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if category:
+        clauses.append("category LIKE ?")
+        params.append(f"%{category}%")
+    if query:
+        clauses.append(
+            "(qid LIKE ? OR phenomenon LIKE ? OR root_cause LIKE ? OR solution LIKE ? OR files LIKE ?)"
+        )
+        kw = f"%{query}%"
+        params.extend([kw, kw, kw, kw, kw])
+
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    sql = f"SELECT * FROM qa_entries{where} ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+
+    try:
+        return conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        # 表不存在等
+        return []
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Search QA entries")
+    parser = argparse.ArgumentParser(description="Search qa.db entries")
     parser.add_argument("query", nargs="?", help="Search query (keyword or Q-ID)")
     parser.add_argument("-s", "--status", help="Filter by status (Pending, 已解决待验证, 已验证, WontFix, Unresolved)")
     parser.add_argument("-c", "--category", help="Filter by category (Bug Fix, Feature, etc.)")
     parser.add_argument("-n", "--limit", type=int, default=10, help="Max results (default: 10)")
-    
+    parser.add_argument("--db", help="Path to qa.db (default: ./qa.db)")
+
     args = parser.parse_args()
-    
-    content = read_qa_md()
-    if not content:
-        print("QA.md not found.")
+
+    if not os.path.exists(resolve_db_path(args.db)):
+        print(f"{resolve_db_path(args.db)} not found. Run 'python scripts/qa_tool.py init' first.")
         return
-    
-    results = search_entries(content, args.query, args.status, args.category, args.limit)
-    
+
+    conn = connect(args.db)
+    results = search_entries(conn, args.query, args.status, args.category, args.limit)
+
     if not results:
         print("No matching entries found.")
+        conn.close()
         return
-    
+
     print(f"Found {len(results)} entries:\n")
     for r in results:
-        print(f"## {r['id']} | {r['date']} | {r['category']} | {r['status']}")
-        print(f"{r['summary']}")
+        print(f"## {r['qid']} | {r['date']} | {r['category']} | {r['status']}")
+        summary = (r["phenomenon"] or "")[:100]
+        print(f"{summary}...")
         print("---")
+    conn.close()
+
 
 if __name__ == "__main__":
     main()

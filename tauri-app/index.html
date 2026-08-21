@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QA Log</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --fg: #e6edf3;
+      --fg-muted: #8b949e;
+      --accent: #58a6ff;
+      --success: #3fb950;
+      --warning: #d29922;
+      --danger: #f85149;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; height: 100vh; overflow: hidden; }
+    .app { display: flex; flex-direction: column; height: 100vh; }
+    .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; }
+    .header h1 { font-size: 18px; font-weight: 600; }
+    .controls { display: flex; gap: 10px; align-items: center; }
+    input[type="text"] { background: var(--bg); color: var(--fg); border: 1px solid var(--border); padding: 6px 12px 6px 28px; border-radius: 6px; font-size: 13px; width: 220px; outline: none; }
+    input[type="text"]:focus { border-color: var(--accent); }
+    .search-wrap { position: relative; }
+    .search-wrap::before { content: '🔍'; position: absolute; left: 8px; top: 50%; transform: translateY(-50%); font-size: 12px; }
+    select, button { background: var(--surface); color: var(--fg); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+    select:hover, button:hover { border-color: var(--accent); }
+    .main { display: flex; flex: 1; overflow: hidden; }
+    .sidebar { width: 320px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+    .sidebar-head { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; display: flex; justify-content: space-between; }
+    .entry-list { flex: 1; overflow-y: auto; }
+    .entry-item { padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
+    .entry-item:hover { background: rgba(88,166,255,0.08); }
+    .entry-item.active { background: rgba(88,166,255,0.15); border-left: 3px solid var(--accent); }
+    .qid { font-weight: 600; font-size: 13px; color: var(--accent); }
+    .qtitle { font-size: 12px; color: var(--fg-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .qmeta { font-size: 11px; color: var(--fg-muted); margin-top: 4px; display: flex; gap: 8px; }
+    .badge { padding: 1px 6px; border-radius: 10px; font-size: 10px; }
+    .badge-pending { background: rgba(139,148,158,0.2); color: var(--fg-muted); }
+    .badge-resolved { background: rgba(63,185,80,0.2); color: var(--success); }
+    .badge-unresolved { background: rgba(248,81,73,0.2); color: var(--danger); }
+    .badge-wontfix { background: rgba(210,153,34,0.2); color: var(--warning); }
+    .detail { flex: 1; overflow-y: auto; padding: 24px; }
+    .detail-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--fg-muted); }
+    .card { max-width: 720px; margin: 0 auto; }
+    .card-header { margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+    .card-header .qid { font-size: 22px; font-weight: 700; color: var(--accent); }
+    .card-header .meta { font-size: 13px; color: var(--fg-muted); margin-top: 4px; display: flex; gap: 12px; }
+    .section { margin-bottom: 20px; }
+    .section h3 { font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+    .section p { color: var(--fg); white-space: pre-wrap; line-height: 1.6; }
+    table.files-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.files-table th, table.files-table td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+    table.files-table th { background: var(--surface); color: var(--accent); font-weight: 600; }
+    table.files-table tr:hover td { background: rgba(88,166,255,0.05); }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <h1>📋 QA Log</h1>
+      <div class="controls">
+        <div class="search-wrap"><input type="text" id="search" placeholder="搜索..." oninput="filter()"></div>
+        <select id="statusFilter" onchange="filter()"><option value="">全部状态</option><option value="Pending">待解决</option><option value="已解决待验证">已解决待验证</option><option value="已验证">已验证</option><option value="WontFix">暂不修复</option><option value="Unresolved">未解决</option></select>
+        <button onclick="refresh()">↻ 刷新</button>
+      </div>
+    </div>
+    <div class="main">
+      <div class="sidebar">
+        <div class="sidebar-head"><span>QA 条目</span><span id="stats">共 0 条</span></div>
+        <div class="entry-list" id="entryList"></div>
+      </div>
+      <div class="detail" id="detail"><div class="detail-empty">选择左侧条目查看详情</div></div>
+    </div>
+  </div>
+  <script src="src/index.js"></script>
+</body>
+</html>

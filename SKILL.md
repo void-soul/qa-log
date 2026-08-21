@@ -1,7 +1,7 @@
 ---
 name: qa-log
-description: "Use when the user asks a programming question or requests a code change. Logs the question and its solution to QA.md in the project root using a structured 4-section format: 现象/需求, 根因, 解决方案, 涉及文件. Supports multi-question decomposition and token-efficient retrieval via scripts."
-version: 2.5.0
+description: "Use when the user asks a programming question or requests a code change. Logs the question and its solution to qa.db (SQLite) in the project root using a structured 4-section format: 现象/需求, 根因, 解决方案, 涉及文件. Supports multi-question decomposition and token-efficient retrieval via scripts."
+version: 3.0.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -13,9 +13,29 @@ metadata:
 
 # QA Log — Cross-Session Context Preservation
 
-当用户提出编程问题或要求代码变更时，使用此技能记录问题和解决方案到 `QA.md`。
+当用户提出编程问题或要求代码变更时，使用此技能记录问题和解决方案到 `qa.db`。
 
 **核心原则：** 每个解决的问题都成为可搜索的参考。
+
+> **存储说明（v3.0）**：数据源已从 `QA.md`（Markdown）迁移为 `qa.db`（SQLite 单文件数据库）。
+> `qa.db` 位于**使用此 skill 的项目根目录**（不是 skill 目录）。脚本默认读写 `./qa.db`，
+> 因此运行脚本前请先 `cd <project-root>`。Tauri 桌面浏览器读取同一个 `qa.db`。
+
+## 首次使用初始化（MANDATORY）
+
+在项目的第一次使用时，一条命令同时完成「建库 + 部署浏览器 exe」：
+
+```bash
+cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
+```
+
+`setup` 会：
+1. 若项目根目录无 `qa.db`，创建 `qa.db` + `qa_entries` 表（已有则跳过）
+2. 若项目根目录无 `QALogBrowser.exe`，从 skill 的 `bin/` 目录复制过来（已有则跳过）
+
+之后直接双击 `QALogBrowser.exe` 即可查看 `qa.db` 数据。
+
+> 开发调试时也可 `cd <skill-path>/tauri-app && npm run tauri dev`（前端 dev 服务器）。
 
 ## 对外提供的能力
 
@@ -42,7 +62,7 @@ metadata:
 
 **搜索条目：** 加载 `qa-log/skills/search` 技能，按关键词、状态、类别搜索历史QA记录
 
-**格式检查：** 加载 `qa-log/skills/format-doc` 技能，验证和修复 QA.md 结构
+**格式检查：** 加载 `qa-log/skills/format-doc` 技能，验证和修复 qa.db 条目结构
 
 **分批次提交：** 加载 `qa-log/skills/batch-commit` 技能，按功能分组提交代码，避免一次性提交全部
 
@@ -65,16 +85,17 @@ metadata:
 
 ## CLI 参考（scripts/qa_tool.py）
 
-`qa_tool.py` 直接读写 `QA.md`，支持以下子命令：
+`qa_tool.py` 直接读写项目根目录的 `qa.db`，支持以下子命令：
 
 | 子命令 | 参数 | 说明 |
 |--------|------|------|
+| `setup` | — | 首次使用：建 `qa.db` + 复制 `QALogBrowser.exe` 到项目根目录 |
 | `summary` | — | 列出所有条目（ID + 标题） |
 | `get <ID>` | `ID`（如 `Q-003` 或 `3`） | 查看单条完整内容 |
 | `append` | `-c/--category`, `-q/--question` | 新增条目（ID 自动递增，状态默认 Pending） |
 | `update <ID>` | `-q/--question`, `-s/--status`, `-r/--root-cause`, `-a/--answer`, `-f/--files` | 更新已有条目 |
 | `next-id` | — | 打印下一个可用 ID |
-| `format` | — | 校验并报告 QA.md 结构问题 |
+| `format` | — | 校验并报告 qa.db 条目结构问题 |
 
 **`update` 可修改字段说明：**
 - `-q/--question`：覆盖「现象/需求」字段（即新增时写入的问题文本）。**用于修正乱码或改写需求描述**。
@@ -85,7 +106,9 @@ metadata:
 
 所有文本参数中字面量 `\\n` 会被展开为真实换行；多行内容建议用 `\\n` 拼接。
 
-> **乱码预防：** 所有脚本已强制使用UTF-8编码（`sys.stdout.reconfigure(encoding="utf-8")`）。Windows环境下如需在命令行直接使用，请先执行 `chcp 65001` 切换到UTF-8代码页。推荐通过Python调用避免编码问题。
+> **乱码预防：** 所有脚本已强制使用UTF-8编码（`sys.stdout.reconfigure(encoding="utf-8")`）。
+> Windows环境下如需在命令行直接使用，请先执行 `chcp 65001` 切换到UTF-8代码页。
+> 推荐通过 Python 脚本调用避免命令行编码问题（中文参数勿直接在 shell 中传递）。
 
 ## 技能组织说明
 

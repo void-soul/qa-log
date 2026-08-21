@@ -1,7 +1,7 @@
 ---
 name: qa-log-batch-commit
-description: "根据QA条目内容分批次提交代码。当用户要求'按QA提交'或'分批commit'时触发，支持按文件组/功能点分组，避免一次性提交全部代码。"
-version: 1.0.0
+description: "根据qa.db条目内容分批次提交代码。当用户要求'按QA提交'或'分批commit'时触发，支持按文件组/功能点分组，避免一次性提交全部代码。"
+version: 2.0.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
