@@ -86,10 +86,58 @@ fn get_entries(app: AppHandle) -> Result<Vec<QaEntry>, String> {
     entries.map_err(|e| e.to_string())
 }
 
+/// 更新一条 QA 记录。id 用于定位记录，其余字段为可更新的内容。
+#[tauri::command]
+fn update_entry(
+    app: AppHandle,
+    id: i64,
+    qid: String,
+    category: String,
+    status: String,
+    phenomenon: String,
+    root_cause: String,
+    solution: String,
+    files: String,
+) -> Result<(), String> {
+    let conn = open_db(&app)?;
+    let affected = conn
+        .execute(
+            "UPDATE qa_entries
+             SET qid = ?, category = ?, status = ?, phenomenon = ?,
+                 root_cause = ?, solution = ?, files = ?
+             WHERE id = ?",
+            rusqlite::params![
+                qid, category, status, phenomenon, root_cause, solution, files, id
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    if affected == 0 {
+        return Err(format!("Entry id={} not found", id));
+    }
+    Ok(())
+}
+
+/// 删除一条 QA 记录。
+#[tauri::command]
+fn delete_entry(app: AppHandle, id: i64) -> Result<(), String> {
+    let conn = open_db(&app)?;
+    let affected = conn
+        .execute("DELETE FROM qa_entries WHERE id = ?", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    if affected == 0 {
+        return Err(format!("Entry id={} not found", id));
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![get_entries])
+        .invoke_handler(tauri::generate_handler![
+            get_entries,
+            update_entry,
+            delete_entry
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

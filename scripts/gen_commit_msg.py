@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""生成描述性commit message，确保UTF-8编码无乱码"""
+"""生成描述性commit message（英文），确保UTF-8编码无乱码"""
 import sys
 import json
+import os
 import argparse
 
 # 强制UTF-8输出
@@ -24,9 +25,9 @@ TYPE_MAP = {
 }
 
 def generate_message(data):
-    """生成commit message"""
+    """生成commit message（description 应为英文）"""
     qid = data.get('id', 'Q-000')
-    description = data.get('description', '')
+    description = data.get('description', '') or f"Fix issue #{qid}"
     change_type = data.get('type', 'fix')
     
     # 规范化type
@@ -46,31 +47,38 @@ def main():
     
     args = parser.parse_args()
     
-    # 从stdin读取JSON
-    if sys.stdin.isatty():
-        # 非管道模式，从命令行参数读取
-        data = {
-            'id': args.id,
-            'description': args.desc,
-            'type': args.type
-        }
-    else:
-        # 管道模式，从stdin读取
-        raw = sys.stdin.read()
+    # 数据来源优先级：--input > 命令行参数(--id/--desc/--type) > stdin(管道)
+    data = {}
+    if args.input:
+        # --input 指定了 JSON 字符串或文件路径
         try:
+            if os.path.exists(args.input):
+                with open(args.input, "r", encoding="utf-8") as f:
+                    raw = f.read()
+            else:
+                raw = args.input
             data = json.loads(raw)
         except json.JSONDecodeError:
             print("Error: Invalid JSON input", file=sys.stderr)
             sys.exit(1)
-    
-    # 补充参数
+    elif not sys.stdin.isatty():
+        # 管道模式，从stdin读取
+        raw = sys.stdin.read()
+        if raw.strip():
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                print("Error: Invalid JSON input", file=sys.stderr)
+                sys.exit(1)
+
+    # 命令行参数覆盖/补充
     if args.id:
         data['id'] = args.id
     if args.desc:
         data['description'] = args.desc
     if args.type:
         data['type'] = args.type
-    
+
     msg = generate_message(data)
     print(msg)
 

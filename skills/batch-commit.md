@@ -41,9 +41,9 @@ cd <project-root> && python scripts/qa_tool.py get <ID>
 | 不同业务领域 | 订单模块 / 用户模块 / 支付模块 |
 | 配置变更 | 单独一组，不与其他代码混合 |
 
-### 3. 生成commit message（CRITICAL：无乱码）
+### 3. 生成commit message（CRITICAL：无乱码 + 英文）
 
-使用Python脚本确保UTF-8编码：
+Commit message 的 `description` 一律使用**英文**。使用Python脚本确保UTF-8编码：
 
 ```python
 # scripts/gen_commit_msg.py
@@ -55,16 +55,16 @@ qid = data['id']
 files = data['files']
 change_type = data.get('type', 'fix')  # fix, feat, refactor, test
 
-# 根据文件内容推断简洁描述
-desc = data.get('description', f"修复 {qid} 相关问题")
+# 根据文件内容推断简洁描述（英文）
+desc = data.get('description', f"Fix issue #{qid}")
 
 msg = f"{change_type}: #{qid} {desc}"
 print(msg.encode('utf-8').decode('utf-8'))  # 显式UTF-8
 ```
 
-调用方式：
+调用方式（description 用英文）：
 ```bash
-echo '{"id":"Q-001","files":["app.py","config.yaml"],"description":"修复保存按钮"}' | python scripts/gen_commit_msg.py
+echo '{"id":"Q-001","files":["app.py","config.yaml"],"description":"Fix save button not responding"}' | python scripts/gen_commit_msg.py
 ```
 
 ### 4. 分批执行提交
@@ -73,13 +73,13 @@ echo '{"id":"Q-001","files":["app.py","config.yaml"],"description":"修复保存
 ```bash
 cd <project-root>
 git add <file1> <file2>
-git commit -m "$(echo '{"id":"Q-001","files":["app.py"],"description":"修复保存按钮"}' | python scripts/gen_commit_msg.py)"
+git commit -m "$(echo '{"id":"Q-001","files":["app.py"],"description":"Fix save button not responding"}' | python scripts/gen_commit_msg.py)"
 ```
 
 **第二批**（如有）：
 ```bash
 git add <file3> <file4>
-git commit -m "$(echo '{"id":"Q-002","files":["component.vue"],"description":"新增导出功能"}' | python scripts/gen_commit_msg.py)"
+git commit -m "$(echo '{"id":"Q-002","files":["component.vue"],"description":"Add export feature"}' | python scripts/gen_commit_msg.py)"
 ```
 
 ### 5. 每批提交后确认

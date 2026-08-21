@@ -56,6 +56,29 @@
     table.files-table th, table.files-table td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
     table.files-table th { background: var(--surface); color: var(--accent); font-weight: 600; }
     table.files-table tr:hover td { background: rgba(88,166,255,0.05); }
+    .card-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .btn { padding: 6px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--fg); }
+    .btn:hover { border-color: var(--accent); }
+    .btn-edit:hover { border-color: var(--accent); }
+    .btn-delete { color: var(--danger); border-color: var(--border); }
+    .btn-delete:hover { border-color: var(--danger); background: rgba(248,81,73,0.1); }
+    .btn-primary { background: var(--accent); color: #0d1117; border: none; font-weight: 600; }
+    .btn-primary:hover { filter: brightness(1.1); }
+    /* 弹窗 */
+    .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; width: 640px; max-width: 92vw; max-height: 88vh; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,0.5); }
+    .modal-head { padding: 14px 20px; border-bottom: 1px solid var(--border); font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+    .modal-close { background: none; border: none; color: var(--fg-muted); font-size: 20px; cursor: pointer; line-height: 1; }
+    .modal-close:hover { color: var(--fg); }
+    .modal-body { padding: 16px 20px; overflow-y: auto; }
+    .modal-foot { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
+    .form-row { margin-bottom: 12px; }
+    .form-row label { display: block; font-size: 12px; color: var(--fg-muted); margin-bottom: 4px; }
+    .form-row input[type="text"], .form-row select, .form-row textarea { width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 13px; outline: none; font-family: inherit; }
+    .form-row input:focus, .form-row select:focus, .form-row textarea:focus { border-color: var(--accent); }
+    .form-row textarea { resize: vertical; min-height: 60px; }
+    .form-row textarea.files { min-height: 120px; font-family: Consolas, monospace; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -79,6 +102,67 @@
       <div class="detail" id="detail"><div class="detail-empty">选择左侧条目查看详情</div></div>
     </div>
   </div>
+
+  <!-- 编辑弹窗 -->
+  <div class="modal-mask" id="editModal" style="display:none">
+    <div class="modal">
+      <div class="modal-head">
+        <span>编辑 QA 记录</span>
+        <button class="modal-close" onclick="closeEditModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-row">
+            <label>QID</label>
+            <input type="text" id="editQid">
+          </div>
+          <div class="form-row">
+            <label>日期</label>
+            <input type="text" id="editDate" disabled>
+          </div>
+          <div class="form-row">
+            <label>类别</label>
+            <select id="editCategory">
+              <option>Bug Fix</option><option>Feature</option><option>Architecture</option>
+              <option>Refactoring</option><option>Performance</option><option>Config/Setup</option>
+              <option>Understanding</option><option>Other</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>状态</label>
+            <select id="editStatus">
+              <option value="Pending">Pending</option>
+              <option value="已解决待验证">已解决待验证</option>
+              <option value="已验证">已验证</option>
+              <option value="WontFix">WontFix</option>
+              <option value="Unresolved">Unresolved</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>现象/需求</label>
+          <textarea id="editPhenomenon" rows="2"></textarea>
+        </div>
+        <div class="form-row">
+          <label>根因</label>
+          <textarea id="editRootCause" rows="3"></textarea>
+        </div>
+        <div class="form-row">
+          <label>解决方案</label>
+          <textarea id="editSolution" rows="4"></textarea>
+        </div>
+        <div class="form-row">
+          <label>涉及文件（Markdown 表格，每行一条）</label>
+          <textarea id="editFiles" class="files" rows="4" placeholder="| File | Change |&#10;|------|--------|&#10;| app.py | 修改 Width |"></textarea>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeEditModal()">取消</button>
+        <button class="btn btn-primary" onclick="saveEdit()">保存</button>
+      </div>
+    </div>
+  </div>
+
   <script src="src/index.js"></script>
 </body>
 </html>

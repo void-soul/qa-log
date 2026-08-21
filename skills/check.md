@@ -122,17 +122,18 @@ git commit -m "<type>: #Q-XXX <description>"
 git push (if needed)
 ```
 
-**提交信息格式（强制）：**
+**提交信息格式（强制）：Commit message 一律使用英文**
 
 | 类型 | 格式 | 示例 |
 |------|------|------|
-| Bug 修复 | `fix: #Q-XXX <描述>` | `fix: #Q-029 修复保存按钮无响应` |
-| 新功能 | `feat: #Q-XXX <描述>` | `feat: #Q-030 添加导出功能` |
-| 重构 | `refactor: #Q-XXX <描述>` | `refactor: #Q-031 拆分上帝文件` |
-| 测试 | `test: #Q-XXX <描述>` | `test: #Q-032 添加单元测试` |
+| Bug 修复 | `fix: #Q-XXX <desc>` | `fix: #Q-029 Fix save button not responding` |
+| 新功能 | `feat: #Q-XXX <desc>` | `feat: #Q-030 Add export feature` |
+| 重构 | `refactor: #Q-XXX <desc>` | `refactor: #Q-031 Split god file into modules` |
+| 测试 | `test: #Q-XXX <desc>` | `test: #Q-032 Add unit tests` |
 
 **规则：**
 - **必须包含 QA ID**（如 `#Q-029`）
+- **Commit message 使用英文**（描述部分不要写中文）
 - 只提交 QA 条目中列出的文件
 - 永远不要自动提交 — 必须先询问用户
 

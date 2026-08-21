@@ -60,6 +60,10 @@ function renderDetail(entry) {
           <span>📁 ${escapeHtml(entry.category)}</span>
           <span class="badge badge-${getStatusClass(entry.status)}">${escapeHtml(entry.status)}</span>
         </div>
+        <div class="card-actions">
+          <button class="btn btn-edit" onclick="openEditModal(${entry.id})">✏️ 编辑</button>
+          <button class="btn btn-delete" onclick="deleteEntry(${entry.id})">🗑️ 删除</button>
+        </div>
       </div>
       <div class="section">
         <h3>现象/需求</h3>
@@ -137,6 +141,67 @@ function refresh() {
   loadEntries()
 }
 
+// ---------- 编辑 ----------
+let editingId = null
+
+function openEditModal(id) {
+  const entry = allEntries.find(e => e.id === id)
+  if (!entry) return
+  editingId = id
+  document.getElementById('editQid').value = entry.qid
+  document.getElementById('editDate').value = entry.date
+  document.getElementById('editCategory').value = entry.category
+  document.getElementById('editStatus').value = entry.status
+  document.getElementById('editPhenomenon').value = entry.phenomenon || ''
+  document.getElementById('editRootCause').value = entry.root_cause || ''
+  document.getElementById('editSolution').value = entry.solution || ''
+  document.getElementById('editFiles').value = entry.files || ''
+  document.getElementById('editModal').style.display = 'flex'
+}
+
+function closeEditModal() {
+  document.getElementById('editModal').style.display = 'none'
+  editingId = null
+}
+
+async function saveEdit() {
+  if (editingId === null) return
+  const payload = {
+    id: editingId,
+    qid: document.getElementById('editQid').value.trim(),
+    category: document.getElementById('editCategory').value,
+    status: document.getElementById('editStatus').value,
+    phenomenon: document.getElementById('editPhenomenon').value,
+    root_cause: document.getElementById('editRootCause').value,
+    solution: document.getElementById('editSolution').value,
+    files: document.getElementById('editFiles').value,
+  }
+  try {
+    await invoke('update_entry', payload)
+    closeEditModal()
+    await loadEntries()
+  } catch (e) {
+    alert('保存失败: ' + e)
+  }
+}
+
+// ---------- 删除 ----------
+async function deleteEntry(id) {
+  const entry = allEntries.find(e => e.id === id)
+  const label = entry ? entry.qid : id
+  if (!confirm(`确定删除 ${label} 吗？此操作不可撤销。`)) return
+  try {
+    await invoke('delete_entry', { id })
+    await loadEntries()
+    // 删除后清除详情，若列表为空则显示空提示
+    if (filteredEntries.length === 0) {
+      document.getElementById('detail').innerHTML = '<div class="detail-empty">无条目</div>'
+    }
+  } catch (e) {
+    alert('删除失败: ' + e)
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadEntries()
 })
@@ -144,3 +209,7 @@ document.addEventListener('DOMContentLoaded', () => {
 window.refresh = refresh
 window.selectEntry = selectEntry
 window.filter = filter
+window.openEditModal = openEditModal
+window.closeEditModal = closeEditModal
+window.saveEdit = saveEdit
+window.deleteEntry = deleteEntry

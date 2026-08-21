@@ -15,6 +15,21 @@
 
 浏览器启动时若 `qa.db` 不存在或缺少 `qa_entries` 表，会自动创建（幂等），可直接运行。
 
+## 功能
+
+- **浏览**：左侧列表 + 右侧详情，支持关键词搜索、状态筛选
+- **编辑**：详情页「✏️ 编辑」打开表单，修改类别/状态/现象/根因/解决方案/涉及文件（调 `update_entry`）
+- **删除**：详情页「🗑️ 删除」二次确认后删除记录（调 `delete_entry`）
+- **自动建表**：启动时若无 `qa_entries` 表则自动创建
+
+## 后端命令
+
+| 命令 | 参数 | 说明 |
+|------|------|------|
+| `get_entries` | — | 返回全部条目（倒序） |
+| `update_entry` | id, qid, category, status, phenomenon, root_cause, solution, files | 更新一条记录 |
+| `delete_entry` | id | 删除一条记录 |
+
 ## 构建方式（MANDATORY：必须用 tauri CLI）
 
 > ⚠️ **必须使用 tauri CLI（`npx tauri build`）构建，不能直接用 `cargo build`**。

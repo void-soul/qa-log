@@ -17,6 +17,8 @@ metadata:
 
 **核心原则：** 每个解决的问题都成为可搜索的参考。
 
+**提交规则：** git commit message 一律使用**英文**编写（描述部分不要写中文），并包含 QA ID 追溯标记（如 `fix: #Q-001 Fix save button`）。详见 `skills/check.md` 与 `skills/batch-commit.md`。
+
 > **存储说明（v3.0）**：数据源已从 `QA.md`（Markdown）迁移为 `qa.db`（SQLite 单文件数据库）。
 > `qa.db` 位于**使用此 skill 的项目根目录**（不是 skill 目录）。脚本默认读写 `./qa.db`，
 > 因此运行脚本前请先 `cd <project-root>`。Tauri 桌面浏览器读取同一个 `qa.db`。

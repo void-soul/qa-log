@@ -69,19 +69,20 @@ python scripts/qa_tool.py update Q-005 -s "已解决待验证" -r "**Width** pro
 
 ## 提交说明生成（Commit Message）
 
-提交时应使用描述性commit message，而非仅关联QA编号：
+提交时应使用描述性commit message，而非仅关联QA编号。**Commit message 一律使用英文**。
 
 ```bash
-# 方式1: 使用 gen_commit_msg.py 脚本
-echo '{"id":"Q-001","description":"修复保存按钮无响应","type":"fix"}' | python scripts/gen_commit_msg.py
-# 输出: fix: #Q-001 修复保存按钮无响应
+# 方式1: 使用 gen_commit_msg.py 脚本（description 用英文）
+echo '{"id":"Q-001","description":"Fix save button not responding","type":"fix"}' | python scripts/gen_commit_msg.py
+# 输出: fix: #Q-001 Fix save button not responding
 
-# 方式2: 手动构建（确保UTF-8）
-git commit -m "fix: #Q-001 修复保存按钮点击无响应问题"
+# 方式2: 手动构建（英文）
+git commit -m "fix: #Q-001 Fix save button not responding"
 ```
 
 **提交规则：**
 - **必须包含QA ID**（如 `#Q-001`）作为追溯标记
+- **Commit message 使用英文**描述具体修复/改动内容（不要在 commit 里写中文）
 - **必须有描述性文字**说明具体修复了什么
 - **分批次提交**：不同功能点分多个commit，不要一次性提交所有改动
 - **使用Python脚本生成**避免命令行编码问题
