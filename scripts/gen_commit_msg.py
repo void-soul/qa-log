@@ -26,7 +26,7 @@ TYPE_MAP = {
 
 def generate_message(data):
     """生成commit message（description 应为英文）"""
-    qid = data.get('id', 'Q-000')
+    qid = data.get('id', 'Q-0000')
     description = data.get('description', '') or f"Fix issue #{qid}"
     change_type = data.get('type', 'fix')
     
@@ -42,7 +42,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate commit message from JSON data")
     parser.add_argument('--input', '-i', help='Input JSON file or string')
     parser.add_argument('--type', '-t', default='fix', help='Commit type (fix/feat/refactor/test)')
-    parser.add_argument('--id', '-q', help='QA ID (e.g., Q-001)')
+    parser.add_argument('--id', '-q', help='QA ID (e.g., Q-0001)')
     parser.add_argument('--desc', '-d', help='Description')
     
     args = parser.parse_args()

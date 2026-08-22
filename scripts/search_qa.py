@@ -2,28 +2,15 @@
 """搜索 qa.db 中的 QA 条目。"""
 import argparse
 import os
-import sqlite3
 import sys
+
+# 共享 DB 逻辑（自动迁移 + 4 位零填充）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from db import connect, resolve_db_path
 
 # 强制 UTF-8
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-DB_NAME = "qa.db"
-
-
-def resolve_db_path(explicit=None):
-    """默认读取当前工作目录（项目根目录）的 qa.db。"""
-    if explicit:
-        return explicit
-    return os.path.join(os.getcwd(), DB_NAME)
-
-
-def connect(db_path=None):
-    path = resolve_db_path(db_path)
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 def search_entries(conn, query=None, status=None, category=None, limit=10):
@@ -45,14 +32,9 @@ def search_entries(conn, query=None, status=None, category=None, limit=10):
         params.extend([kw, kw, kw, kw, kw])
 
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
-    sql = f"SELECT * FROM qa_entries{where} ORDER BY id DESC LIMIT ?"
+    sql = f"SELECT * FROM qa_entries{where} ORDER BY qid DESC LIMIT ?"
     params.append(limit)
-
-    try:
-        return conn.execute(sql, params).fetchall()
-    except sqlite3.OperationalError:
-        # 表不存在等
-        return []
+    return conn.execute(sql, params).fetchall()
 
 
 def main():
@@ -65,10 +47,12 @@ def main():
 
     args = parser.parse_args()
 
-    if not os.path.exists(resolve_db_path(args.db)):
-        print(f"{resolve_db_path(args.db)} not found. Run 'python scripts/qa_tool.py init' first.")
+    db_path = resolve_db_path(args.db)
+    if not os.path.exists(db_path):
+        print(f"{db_path} not found. Run 'python scripts/qa_tool.py setup' first.")
         return
 
+    # connect() 会自动跑 ensure_schema，legacy DB 也能开
     conn = connect(args.db)
     results = search_entries(conn, args.query, args.status, args.category, args.limit)
 

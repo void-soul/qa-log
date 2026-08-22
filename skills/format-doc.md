@@ -107,6 +107,6 @@ Validated 15 entries — all valid
 Or if issues found:
 ```
 Found 2 issue(s):
-  - Q-005: Invalid status 'OLD_STATUS'
-  - Q-012: phenomenon (现象/需求) is empty
+  - Q-0005: Invalid status 'OLD_STATUS'
+  - Q-0012: phenomenon (现象/需求) is empty
 ```

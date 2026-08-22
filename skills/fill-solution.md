@@ -27,7 +27,7 @@ Phase 3 of the qa-log workflow. Records the solution into an existing QA entry i
 Use the `terminal` tool to run the following commands:
 
 ### Step 1: Get the Q-ID
-You need the Q-ID from Phase 1 (e.g., `Q-005`). If unknown, run:
+You need the Q-ID from Phase 1 (e.g., `Q-0005`). If unknown, run:
 ```bash
 cd <project-root> && python scripts/qa_tool.py summary
 ```
@@ -39,7 +39,7 @@ cd <project-root> && python scripts/qa_tool.py update <ID> --status "已解决�
 
 **Replace placeholders:**
 - `<project-root>`: actual path to project directory
-- `<ID>`: Q-ID like `Q-005`
+- `<ID>`: Q-ID like `Q-0005`
 - `<root cause>`: explanation of why the bug occurred, with **bold** around identifiers
 - `<solution steps>`: ordered list of steps taken (1. 2. 3.)
 - `<files table>`: Markdown table of changed files
@@ -61,10 +61,10 @@ Use **single quotes** around parameter values containing backticks. Double quote
 
 ```bash
 # Correct — single quotes preserve backticks
-cd /path/to/project && python scripts/qa_tool.py update Q-005 -s "已解决待验证" -r '**Width** 属性设置错误' -a '1. 修改 **app.py** 中 **Width** 为 340' -f '| File | Change |\n|------|--------|\n| **app.py** | **Width** 250 -> 340 |'
+cd /path/to/project && python scripts/qa_tool.py update Q-0005 -s "已解决待验证" -r '**Width** 属性设置错误' -a '1. 修改 **app.py** 中 **Width** 为 340' -f '| File | Change |\n|------|--------|\n| **app.py** | **Width** 250 -> 340 |'
 
 # Wrong — double quotes eat backticks
-python scripts/qa_tool.py update Q-005 -s "已解决待验证" -r "**Width** property"
+python scripts/qa_tool.py update Q-0005 -s "已解决待验证" -r "**Width** property"
 ```
 
 ## 提交说明生成（Commit Message）
@@ -73,15 +73,15 @@ python scripts/qa_tool.py update Q-005 -s "已解决待验证" -r "**Width** pro
 
 ```bash
 # 方式1: 使用 gen_commit_msg.py 脚本（description 用英文）
-echo '{"id":"Q-001","description":"Fix save button not responding","type":"fix"}' | python scripts/gen_commit_msg.py
-# 输出: fix: #Q-001 Fix save button not responding
+echo '{"id":"Q-0001","description":"Fix save button not responding","type":"fix"}' | python scripts/gen_commit_msg.py
+# 输出: fix: #Q-0001 Fix save button not responding
 
 # 方式2: 手动构建（英文）
-git commit -m "fix: #Q-001 Fix save button not responding"
+git commit -m "fix: #Q-0001 Fix save button not responding"
 ```
 
 **提交规则：**
-- **必须包含QA ID**（如 `#Q-001`）作为追溯标记
+- **必须包含QA ID**（如 `#Q-0001`）作为追溯标记
 - **Commit message 使用英文**描述具体修复/改动内容（不要在 commit 里写中文）
 - **必须有描述性文字**说明具体修复了什么
 - **分批次提交**：不同功能点分多个commit，不要一次性提交所有改动
@@ -98,16 +98,16 @@ git commit -m "fix: #Q-001 Fix save button not responding"
 ## Example
 
 ```bash
-cd /path/to/project && python scripts/qa_tool.py update Q-005 -s "已解决待验证" -r '播放端和录制端是两个独立项目，初始开发时分别设置了不同的左栏宽度（播放端 **250**，录制端 **340**）' -a '1. 在 **BlotEyes.Player/MainWindow.xaml** 中定位左侧面板的 **ColumnDefinition**\n2. 将主网格左列 **Width="250"** 改为 **Width="340"**\n3. 将非客户端区标题列 **Width="250"** 改为 **Width="340"**\n4. 与录制端对齐' -f '| File | Change |\n|------|--------|\n| **BlotEyes.Player/MainWindow.xaml** | 左栏 **ColumnDefinition** **Width** 250 -> 340（两处） |'
+cd /path/to/project && python scripts/qa_tool.py update Q-0005 -s "已解决待验证" -r '播放端和录制端是两个独立项目，初始开发时分别设置了不同的左栏宽度（播放端 **250**，录制端 **340**）' -a '1. 在 **BlotEyes.Player/MainWindow.xaml** 中定位左侧面板的 **ColumnDefinition**\n2. 将主网格左列 **Width="250"** 改为 **Width="340"**\n3. 将非客户端区标题列 **Width="250"** 改为 **Width="340"**\n4. 与录制端对齐' -f '| File | Change |\n|------|--------|\n| **BlotEyes.Player/MainWindow.xaml** | 左栏 **ColumnDefinition** **Width** 250 -> 340（两处） |'
 ```
 
 Output:
 ```
-Updated Q-005
+Updated Q-0005
 ```
 
 ## Output Format
 
 ```
-Updated Q-NNN
+Updated Q-NNNN
 ```

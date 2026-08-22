@@ -1,6 +1,6 @@
 ---
 name: qa-log-check
-description: "Check and verify a QA entry in qa.db. When user says '请检查Q-XXX', extract the entry, analyze the solution against the problem, and verify correctness."
+description: "Check and verify a QA entry in qa.db. When user says '请检查Q-XXXX', extract the entry, analyze the solution against the problem, and verify correctness."
 version: 2.0.0
 author: Hermes Agent
 license: MIT
@@ -13,7 +13,7 @@ metadata:
 
 # QA Check Entry
 
-当用户说 "请检查Q-XXX" 或类似请求时，从 `qa.db` 提取QA条目并进行彻底的代码审查，验证解决方案是否真正解决问题且没有引入新问题。**检查完成后必须运行 `format` 校验条目结构**。
+当用户说 "请检查Q-XXXX" 或类似请求时，从 `qa.db` 提取QA条目并进行彻底的代码审查，验证解决方案是否真正解决问题且没有引入新问题。**检查完成后必须运行 `format` 校验条目结构**。
 
 > **v2.0**：数据源由 `QA.md` 改为 `qa.db`（SQLite），位于**项目根目录**。运行脚本前先 `cd <project-root>`。
 
@@ -118,7 +118,7 @@ If user confirms, use the `terminal` tool:
 cd <project-root>
 git diff --name-only
 git add <files from QA entry>
-git commit -m "<type>: #Q-XXX <description>"
+git commit -m "<type>: #Q-XXXX <description>"
 git push (if needed)
 ```
 
@@ -126,13 +126,13 @@ git push (if needed)
 
 | 类型 | 格式 | 示例 |
 |------|------|------|
-| Bug 修复 | `fix: #Q-XXX <desc>` | `fix: #Q-029 Fix save button not responding` |
-| 新功能 | `feat: #Q-XXX <desc>` | `feat: #Q-030 Add export feature` |
-| 重构 | `refactor: #Q-XXX <desc>` | `refactor: #Q-031 Split god file into modules` |
-| 测试 | `test: #Q-XXX <desc>` | `test: #Q-032 Add unit tests` |
+| Bug 修复 | `fix: #Q-XXXX <desc>` | `fix: #Q-0029 Fix save button not responding` |
+| 新功能 | `feat: #Q-XXXX <desc>` | `feat: #Q-0030 Add export feature` |
+| 重构 | `refactor: #Q-XXXX <desc>` | `refactor: #Q-0031 Split god file into modules` |
+| 测试 | `test: #Q-XXXX <desc>` | `test: #Q-0032 Add unit tests` |
 
 **规则：**
-- **必须包含 QA ID**（如 `#Q-029`）
+- **必须包含 QA ID**（如 `#Q-0029`）
 - **Commit message 使用英文**（描述部分不要写中文）
 - 只提交 QA 条目中列出的文件
 - 永远不要自动提交 — 必须先询问用户
@@ -176,7 +176,7 @@ git push (if needed)
 
 **条目之间必须有分隔线：**
 ```markdown
-## Q-001 | 2024-01-15 | Bug Fix | 已验证
+## Q-0001 | 2024-01-15 | Bug Fix | 已验证
 
 **现象/需求:** ...
 **根因:** ...
@@ -185,7 +185,7 @@ git push (if needed)
 
 ---
 
-## Q-002 | 2024-01-15 | Bug Fix | Pending
+## Q-0002 | 2024-01-15 | Bug Fix | Pending
 
 **现象/需求:** ...
 ...
@@ -205,7 +205,7 @@ git push (if needed)
 - [ ] **Solution uses ordered list 1. 2. 3.**
 - [ ] **Table format is correct**
 - [ ] **Asked user for commit confirmation**
-- [ ] **Committed with QA ID in message (#Q-XXX)**
+- [ ] **Committed with QA ID in message (#Q-XXXX)**
 - [ ] **Only committed after user explicitly confirmed**
 
 ## Output Format
@@ -213,7 +213,7 @@ git push (if needed)
 After checking, report:
 
 ```
-## 检查报告: Q-XXX
+## 检查报告: Q-XXXX
 
 ### 问题分析
 [分析现象/需求和根因]
@@ -233,17 +233,17 @@ After checking, report:
 
 ## Example
 
-User says: "请检查Q-029"
+User says: "请检查Q-0029"
 
 ```bash
 # Step 1: Extract entry
-cd /path/to/project && python scripts/qa_tool.py get Q-029
+cd /path/to/project && python scripts/qa_tool.py get Q-0029
 
 # Step 4: Read actual code
 read_file(path="/path/to/project/src/some_file.py")
 
 # Step 6: Update if verified
-cd /path/to/project && python scripts/qa_tool.py update Q-029 --status "已验证"
+cd /path/to/project && python scripts/qa_tool.py update Q-0029 --status "已验证"
 
 # Step 7: Format document
 cd /path/to/project && python scripts/qa_tool.py format
@@ -253,5 +253,5 @@ cd /path/to/project && python scripts/qa_tool.py format
 # 等待用户回复...
 
 # Step 9: Commit only if user says yes
-cd /path/to/project && git add app.py && git commit -m "fix: #Q-029 修复保存按钮无响应"
+cd /path/to/project && git add app.py && git commit -m "fix: #Q-0029 修复保存按钮无响应"
 ```

@@ -47,7 +47,7 @@ cd <project-root> && python scripts/qa_tool.py append --category "<Category>" --
 **Replace `<project-root>` with the actual path to the project directory.**
 
 ### Step 4: Record the ID
-The output will be `Created Q-NNN`. Record this ID for later use by `qa-log-fill-solution`.
+The output will be `Created Q-NNNNN` (4-digit, e.g. `Q-0021`). Record this ID for later use by `qa-log-fill-solution`.
 
 ## Categories
 
@@ -72,13 +72,13 @@ cd /path/to/project && python scripts/qa_tool.py append --category "Bug Fix" --q
 
 Output:
 ```
-Created Q-005
+Created Q-0005
 ```
 
 ## Output Format
 
 ```
-Created Q-NNN
+Created Q-0021
 ```
 
 Record the Q-ID for Phase 3.

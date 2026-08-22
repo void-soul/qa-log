@@ -1,8 +1,12 @@
-import { invoke } from '@tauri-apps/api/core'
+// 不使用打包器时无法解析裸模块说明符 @tauri-apps/api/core，改走 window.__TAURI__
+// tauri.conf.json 必须设置 app.withGlobalTauri = true
+const invoke = window.__TAURI__ && window.__TAURI__.core
+  ? window.__TAURI__.core.invoke
+  : null
 
 let allEntries = []
 let filteredEntries = []
-let selectedId = null
+let selectedQid = null
 
 async function loadEntries() {
   try {
@@ -28,26 +32,32 @@ function escapeHtml(text) {
   return div.innerHTML
 }
 
-function renderFilesTable(filesContent) {
-  if (!filesContent || filesContent === '[待填写]') return '<p style="color:var(--fg-muted)">暂无文件信息</p>'
-  const lines = filesContent.split('\n').filter(l => l.trim())
-  if (lines.length < 2) return `<pre style="white-space:pre-wrap;font-family:Consolas,monospace">${escapeHtml(filesContent)}</pre>`
-  
-  let html = '<table class="files-table"><thead><tr>'
-  const headers = lines[0].replace(/[|]/g, '').split(/\s+/).filter(Boolean)
-  headers.forEach(h => html += `<th>${escapeHtml(h)}</th>`)
-  html += '</tr></thead><tbody>'
-  
-  for (let i = 2; i < lines.length; i++) {
-    const cells = lines[i].replace(/[|]/g, '').split(/\s{2,}/).filter(Boolean)
-    if (cells.length >= 2) {
-      html += '<tr>'
-      cells.forEach(cell => html += `<td>${escapeHtml(cell.trim())}</td>`)
-      for (let j = cells.length; j < headers.length; j++) html += '<td></td>'
-      html += '</tr>'
-    }
+// 既要 HTML 转义又要安全嵌入 JS 单引号字符串（qid 用于 inline onclick）
+function escapeAttr(text) {
+  if (!text) return ''
+  return String(text).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;')
+}
+
+// ---------- Markdown 渲染 ----------
+// 用浏览器原生 DOM 做 HTML 转义（防 XSS），再交给 marked.parse 处理。
+// 优点：用户在文本里随手写的 <script> 不会执行；表格/列表/代码块会正确渲染。
+function renderMd(text) {
+  const raw = (text == null ? '' : String(text))
+  const trimmed = raw.trim()
+  if (!trimmed || trimmed === '[待填写]') {
+    return '<p class="md-placeholder">[待填写]</p>'
   }
-  return html + '</tbody></table>'
+  if (typeof window.marked === 'undefined') {
+    // marked.min.js 没载入时的安全回退（不应发生，仅防炸）
+    return `<p>${escapeHtml(raw).replace(/\n/g, '<br>')}</p>`
+  }
+  try {
+    const html = window.marked.parse(escapeHtml(raw), { breaks: true, gfm: true })
+    // 给所有链接加 target=_blank，避免内嵌网页可能不可点击
+    return html.replace(/<a\s+href=/g, '<a target="_blank" rel="noopener noreferrer" href=')
+  } catch (e) {
+    return `<p>${escapeHtml(raw)}</p>`
+  }
 }
 
 function renderDetail(entry) {
@@ -56,30 +66,30 @@ function renderDetail(entry) {
       <div class="card-header">
         <div class="qid">${escapeHtml(entry.qid)}</div>
         <div class="meta">
-          <span>📅 ${escapeHtml(entry.date)}</span>
-          <span>📁 ${escapeHtml(entry.category)}</span>
+          <span>${escapeHtml(entry.date)}</span>
+          <span>${escapeHtml(entry.category)}</span>
           <span class="badge badge-${getStatusClass(entry.status)}">${escapeHtml(entry.status)}</span>
         </div>
         <div class="card-actions">
-          <button class="btn btn-edit" onclick="openEditModal(${entry.id})">✏️ 编辑</button>
-          <button class="btn btn-delete" onclick="deleteEntry(${entry.id})">🗑️ 删除</button>
+          <button class="btn btn-edit" onclick="openEditModal('${escapeAttr(entry.qid)}')">编辑</button>
+          <button class="btn btn-delete" onclick="deleteEntry('${escapeAttr(entry.qid)}')">删除</button>
         </div>
       </div>
       <div class="section">
         <h3>现象/需求</h3>
-        <p>${escapeHtml(entry.phenomenon || '[待填写]')}</p>
+        <div class="md">${renderMd(entry.phenomenon)}</div>
       </div>
       <div class="section">
         <h3>根因</h3>
-        <p>${escapeHtml(entry.root_cause || '[待填写]')}</p>
+        <div class="md">${renderMd(entry.root_cause)}</div>
       </div>
       <div class="section">
         <h3>解决方案</h3>
-        <p>${escapeHtml(entry.solution || '[待填写]')}</p>
+        <div class="md">${renderMd(entry.solution)}</div>
       </div>
       <div class="section">
         <h3>涉及文件</h3>
-        ${renderFilesTable(entry.files)}
+        <div class="md">${renderMd(entry.files)}</div>
       </div>
     </div>
   `
@@ -97,7 +107,7 @@ function renderList() {
   }
   
   list.innerHTML = filteredEntries.map((e, i) => `
-    <div class="entry-item ${i === 0 ? 'active' : ''}" onclick="selectEntry(${e.id})" data-id="${e.id}">
+    <div class="entry-item ${i === 0 ? 'active' : ''}" onclick="selectEntry('${escapeAttr(e.qid)}')" data-qid="${escapeAttr(e.qid)}">
       <div class="qid">${escapeHtml(e.qid)}</div>
       <div class="qtitle">${escapeHtml(e.phenomenon || '')}</div>
       <div class="qmeta">
@@ -107,15 +117,15 @@ function renderList() {
     </div>
   `).join('')
   
-  if (filteredEntries.length > 0) selectEntry(filteredEntries[0].id)
+  if (filteredEntries.length > 0) selectEntry(filteredEntries[0].qid)
 }
 
-function selectEntry(id) {
-  selectedId = id
+function selectEntry(qid) {
+  selectedQid = qid
   document.querySelectorAll('.entry-item').forEach(el => {
-    el.classList.toggle('active', parseInt(el.dataset.id) === id)
+    el.classList.toggle('active', el.dataset.qid === qid)
   })
-  const entry = allEntries.find(e => e.id === id)
+  const entry = allEntries.find(e => e.qid === qid)
   if (entry) {
     document.getElementById('detail').innerHTML = renderDetail(entry)
   }
@@ -142,12 +152,12 @@ function refresh() {
 }
 
 // ---------- 编辑 ----------
-let editingId = null
+let editingQid = null
 
-function openEditModal(id) {
-  const entry = allEntries.find(e => e.id === id)
+function openEditModal(qid) {
+  const entry = allEntries.find(e => e.qid === qid)
   if (!entry) return
-  editingId = id
+  editingQid = qid
   document.getElementById('editQid').value = entry.qid
   document.getElementById('editDate').value = entry.date
   document.getElementById('editCategory').value = entry.category
@@ -161,13 +171,12 @@ function openEditModal(id) {
 
 function closeEditModal() {
   document.getElementById('editModal').style.display = 'none'
-  editingId = null
+  editingQid = null
 }
 
 async function saveEdit() {
-  if (editingId === null) return
+  if (editingQid === null) return
   const payload = {
-    id: editingId,
     qid: document.getElementById('editQid').value.trim(),
     category: document.getElementById('editCategory').value,
     status: document.getElementById('editStatus').value,
@@ -186,12 +195,12 @@ async function saveEdit() {
 }
 
 // ---------- 删除 ----------
-async function deleteEntry(id) {
-  const entry = allEntries.find(e => e.id === id)
-  const label = entry ? entry.qid : id
+async function deleteEntry(qid) {
+  const entry = allEntries.find(e => e.qid === qid)
+  const label = entry ? entry.qid : qid
   if (!confirm(`确定删除 ${label} 吗？此操作不可撤销。`)) return
   try {
-    await invoke('delete_entry', { id })
+    await invoke('delete_entry', { qid })
     await loadEntries()
     // 删除后清除详情，若列表为空则显示空提示
     if (filteredEntries.length === 0) {

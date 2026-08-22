@@ -10,16 +10,16 @@ v3.0 起数据源从 `QA.md`（Markdown）迁移为 `qa.db`（SQLite 单文件�
 
 ```sql
 CREATE TABLE IF NOT EXISTS qa_entries (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    qid        TEXT UNIQUE NOT NULL,      -- e.g. Q-001
-    date       TEXT NOT NULL,             -- YYYY-MM-DD
-    category   TEXT NOT NULL,             -- Bug Fix / Feature / ...
-    status     TEXT NOT NULL DEFAULT 'Pending',
-    phenomenon TEXT NOT NULL,             -- 现象/需求
-    root_cause TEXT DEFAULT '',           -- 根因
-    solution   TEXT DEFAULT '',           -- 解决方案
-    files      TEXT DEFAULT '',           -- 涉及文件 (markdown table)
-    created_at TEXT DEFAULT (datetime('now','localtime'))
+    qid         TEXT PRIMARY KEY,          -- e.g. Q-0001 (唯一标识+排序键，4 位零填充)
+    date        TEXT NOT NULL,             -- YYYY-MM-DD
+    category    TEXT NOT NULL,             -- Bug Fix / Feature / ...
+    status      TEXT NOT NULL DEFAULT 'Pending',
+    phenomenon  TEXT NOT NULL,             -- 现象/需求
+    root_cause  TEXT DEFAULT '',           -- 根因
+    solution    TEXT DEFAULT '',           -- 解决方案
+    files       TEXT DEFAULT '',           -- 涉及文件 (markdown table)
+    created_at  TEXT DEFAULT (datetime('now','localtime')),
+    updated_at  TEXT                       -- 最后修改时间
 );
 ```
 
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS qa_entries (
 `qa_tool.py get <ID>` 以如下 markdown 风格渲染单条记录：
 
 ```markdown
-## Q-NNN | YYYY-MM-DD | Category | Status
+## Q-NNNN | YYYY-MM-DD | Category | Status
 
 **现象/需求:** [Restated problem or requirement]
 
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS qa_entries (
 
 | Field | Description |
 |-------|-------------|
-| `qid` / `Q-NNN` | Incrementing ID, zero-padded to 3 digits |
+| `qid` / `Q-NNNN` | Incrementing ID, zero-padded to 4 digits |
 | `date` / `YYYY-MM-DD` | Date the question was asked |
 | `category` | From the Categories table in SKILL.md |
 | **现象/需求** (`phenomenon`) | The problem or requirement — restated in organized form |
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS qa_entries (
 ## Complete Example (Real-World)
 
 ```markdown
-## Q-039 | 2026-01-15 | Bug Fix | 已验证
+## Q-0039 | 2026-01-15 | Bug Fix | 已验证
 
 **现象/需求:** 播放端左侧工具栏宽度与录制端不一致，播放端视频预览区域被压缩
 
@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS qa_entries (
 ## What NOT to do (Bad Example — Too Vague)
 
 ```markdown
-## Q-039 | 2026-01-15 | Bug Fix | 已验证
+## Q-0039 | 2026-01-15 | Bug Fix | 已验证
 
 **现象/需求:** 播放端左侧工具栏宽度与录制端不一致
 

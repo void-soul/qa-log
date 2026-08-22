@@ -19,7 +19,7 @@ metadata:
 
 ## 触发条件
 
-- 用户说："搜索Q-XXX"、"查找之前关于XXX的问题"
+- 用户说："搜索Q-XXXX"、"查找之前关于XXX的问题"
 - 需要回顾某个类别的所有问题
 - 用户问："有哪些Pending状态的问题？"
 
@@ -29,7 +29,7 @@ metadata:
 
 ```bash
 # 按ID查看完整条目
-cd <project-root> && python scripts/qa_tool.py get Q-XXX
+cd <project-root> && python scripts/qa_tool.py get Q-XXXX
 
 # 列出所有条目摘要
 cd <project-root> && python scripts/qa_tool.py summary
@@ -64,11 +64,11 @@ cd <project-root> && python scripts/search_qa.py 保存 -n 20
 ```
 Found 3 entries:
 
-## Q-029 | 2026-08-02 | Bug Fix | 已验证
+## Q-0029 | 2026-08-02 | Bug Fix | 已验证
 修改了 **app.py** 中的 **Width** 属性...
 ---
 
-## Q-030 | 2026-08-03 | Feature | 已解决待验证
+## Q-0030 | 2026-08-03 | Feature | 已解决待验证
 新增导出功能...
 ---
 ```

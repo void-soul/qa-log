@@ -1,5 +1,18 @@
 /scripts/__pycache__/*.pyc
+
 node_modules
 target
 __pycache__
 dist
+
+# QA log 数据（用户私有，禁止入库）
+qa.db
+*.bak
+*.db.bak
+*.pre-4digit-qid.bak
+
+# Tauri 端 vendored 库：默认忽略整个 vendor/ 目录，
+# 但用 ! 保留 committed 文件（如 marked.min.js）。
+# 后续若手动添加更多 vendored 库，请同步加 ! 白名单。
+/tauri-app/vendor/*
+!/tauri-app/vendor/marked.min.js

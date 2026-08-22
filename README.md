@@ -37,8 +37,7 @@ python <skill-path>/scripts/qa_tool.py append \
 ## 功能特性
 
 - **GitHub Dark 主题** — 现代化深色 UI
-- **分类图标** — 🐛 Bug Fix, ✨ Feature, 🏗 Architecture 等
-- **状态徽章** — 颜色区分 Pending/已验证/WontFix 等
+- **类别与状态徽章** — 颜色区分 Pending/已验证/WontFix 等
 - **ASCII 表格** — 涉及文件用框线表格渲染
 - **实时搜索** — 关键词过滤 + 状态/分类筛选
 - **SQLite 存储** — `qa.db` 单文件，零配置，脚本与 GUI 共用
@@ -55,8 +54,10 @@ python <skill-path>/scripts/qa_tool.py append \
 
 ```
 scripts/
-├── qa_tool.py          # CLI 工具 (setup/append/get/summary/update/next-id/format)
+├── db.py               # 共享 DB 逻辑（connect/ensure_schema，自动迁移 + 4 位零填充）
+├── qa_tool.py          # CLI 工具 (setup/append/get/summary/update/delete/next-id/format)
 ├── search_qa.py        # 高级搜索
+├── qa_md_sync.py       # QA.md ⇄ qa.db 增量合并
 ├── gen_commit_msg.py   # 生成 commit message
 └── qa.db               # SQLite 数据库（在使用 skill 的项目根目录生成）
 ```

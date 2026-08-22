@@ -8,8 +8,7 @@ desktop app reads the same qa.db.
 
 Schema:
     qa_entries (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        qid         TEXT UNIQUE NOT NULL,      -- e.g. Q-001
+        qid         TEXT PRIMARY KEY,          -- e.g. Q-0001 (唯一标识+排序键，4 位零填充)
         date        TEXT NOT NULL,             -- YYYY-MM-DD
         category    TEXT NOT NULL,             -- Bug Fix / Feature / ...
         status      TEXT NOT NULL DEFAULT 'Pending',
@@ -34,15 +33,27 @@ import argparse
 import os
 import re
 import shutil
-import sqlite3
 import sys
 from datetime import date
+
+# 共享数据库逻辑（自动迁移 + 4 位零填充）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from db import (
+    DB_NAME,
+    connect as _db_connect,
+    ensure_schema,
+    get_next_qid,
+    normalize_id,
+    resolve_db_path,
+)
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-# DB file name. qa_tool.py should be run with cwd = project root.
-DB_NAME = "qa.db"
+# 兼容：其它脚本可能用 qa_tool.connect 导入
+connect = _db_connect
+
+# 兼容：DEFAULT_CWD_DB 仍按 cwd/qa.db 解析
 DEFAULT_CWD_DB = os.path.join(os.getcwd(), DB_NAME)
 
 # Valid status values
@@ -65,70 +76,17 @@ def bin_dir():
     return os.path.join(skill_root(), "bin")
 
 
-def resolve_db_path(explicit=None):
-    """Return the path to qa.db.
-
-    Priority:
-      1. --db explicit argument
-      2. ./qa.db in current working directory (project root)
-    """
-    if explicit:
-        return explicit
-    return DEFAULT_CWD_DB
-
-
-def connect(db_path=None):
-    """Open a connection to qa.db, creating the schema if needed."""
-    path = resolve_db_path(db_path)
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def ensure_schema(conn):
-    """Create the qa_entries table if it does not exist."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS qa_entries (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            qid        TEXT UNIQUE NOT NULL,
-            date       TEXT NOT NULL,
-            category   TEXT NOT NULL,
-            status     TEXT NOT NULL DEFAULT 'Pending',
-            phenomenon TEXT NOT NULL,
-            root_cause TEXT DEFAULT '',
-            solution   TEXT DEFAULT '',
-            files      TEXT DEFAULT '',
-            created_at TEXT DEFAULT (datetime('now','localtime'))
-        )
-    """)
-    conn.commit()
-
-
 def ensure_qa_db(db_path=None):
-    """Ensure qa.db exists with the schema. Returns (conn, created)."""
+    """Ensure qa.db exists with the schema. Returns (conn, created).
+
+    `connect()` already calls `ensure_schema()` on every open, but we
+    still need the `created` flag to know if we should print the
+    "Database created at" message in `cmd_setup`.
+    """
     path = resolve_db_path(db_path)
     created = not os.path.exists(path)
     conn = connect(path)
-    ensure_schema(conn)
     return conn, created
-
-
-def get_next_qid(conn):
-    """Find the highest existing QID and return the next one."""
-    row = conn.execute("SELECT qid FROM qa_entries ORDER BY CAST(SUBSTR(qid,3) AS INTEGER) DESC LIMIT 1").fetchone()
-    if row is None:
-        return "Q-001"
-    max_num = int(row["qid"][2:])
-    return f"Q-{max_num + 1:03d}"
-
-
-def normalize_id(id_str):
-    """Normalize ID to Q-NNN format."""
-    id_str = id_str.strip().upper()
-    if not id_str.startswith("Q-"):
-        num = id_str.lstrip("Q-").lstrip("0") or "1"
-        id_str = f"Q-{int(num):03d}"
-    return id_str
 
 
 def cmd_setup(args):
@@ -163,9 +121,12 @@ def cmd_setup(args):
 def cmd_summary(args):
     """List all entries: ID + title only."""
     conn = connect(args.db)
-    rows = conn.execute(
-        "SELECT qid, date, category, status, phenomenon FROM qa_entries ORDER BY id DESC"
-    ).fetchall()
+    sql = "SELECT qid, date, category, status, phenomenon FROM qa_entries ORDER BY qid DESC"
+    params = []
+    if getattr(args, "limit", None):
+        sql += " LIMIT ?"
+        params.append(args.limit)
+    rows = conn.execute(sql, params).fetchall()
     if not rows:
         print("No entries found.")
         conn.close()
@@ -234,7 +195,7 @@ def cmd_append(args):
 
 
 def cmd_update(args):
-    """Update an existing entry's fields."""
+    """Update an existing entry's fields. Stamps updated_at automatically."""
     conn = connect(args.db)
     target = normalize_id(args.id)
     row = conn.execute("SELECT * FROM qa_entries WHERE qid = ?", (target,)).fetchone()
@@ -254,13 +215,65 @@ def cmd_update(args):
 
     conn.execute(
         """UPDATE qa_entries
-           SET status = ?, phenomenon = ?, root_cause = ?, solution = ?, files = ?
+           SET status = ?, phenomenon = ?, root_cause = ?, solution = ?,
+               files = ?, updated_at = datetime('now','localtime')
            WHERE qid = ?""",
         (new_status, new_phenomenon, new_root_cause, new_solution, new_files, target),
     )
     conn.commit()
     conn.close()
     print(f"Updated {target}")
+
+
+def cmd_delete(args):
+    """Delete a single entry by ID. Prompts for confirmation unless -f."""
+    qid = normalize_id(args.id)
+    conn = connect(args.db)
+
+    row = conn.execute(
+        "SELECT qid, date, category, status, phenomenon FROM qa_entries WHERE qid = ?",
+        (qid,),
+    ).fetchone()
+    if row is None:
+        print(f"Error: {qid} not found", file=sys.stderr)
+        conn.close()
+        sys.exit(1)
+
+    title = (row["phenomenon"] or "").strip()
+    if len(title) > 60:
+        title = title[:57] + "..."
+
+    if args.dry_run:
+        print(f"[dry-run] Would delete {qid}:")
+        print(f"  {row['date']} | {row['category']} | {row['status']}")
+        print(f"  {title}")
+        conn.close()
+        return
+
+    if not args.force:
+        print(f"About to delete {qid}:")
+        print(f"  {row['date']} | {row['category']} | {row['status']}")
+        print(f"  {title}")
+        try:
+            ans = input("Confirm? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted", file=sys.stderr)
+            conn.close()
+            sys.exit(130)
+        if ans not in ("y", "yes"):
+            print("Aborted")
+            conn.close()
+            return
+
+    cur = conn.execute("DELETE FROM qa_entries WHERE qid = ?", (qid,))
+    conn.commit()
+    if cur.rowcount == 1:
+        print(f"Deleted {qid}")
+    else:
+        print(f"Error: {qid} not found (race condition?)", file=sys.stderr)
+        conn.close()
+        sys.exit(1)
+    conn.close()
 
 
 def cmd_next_id(args):
@@ -273,7 +286,7 @@ def cmd_next_id(args):
 def cmd_format(args):
     """Validate and report qa.db structure issues."""
     conn = connect(args.db)
-    rows = conn.execute("SELECT * FROM qa_entries ORDER BY id").fetchall()
+    rows = conn.execute("SELECT * FROM qa_entries ORDER BY qid").fetchall()
     if not rows:
         print("No entries found.")
         conn.close()
@@ -309,10 +322,11 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("setup", help="Init qa.db + copy browser exe to project root (first-use)")
-    sub.add_parser("summary", help="List all entries (ID + title)")
+    p_summary = sub.add_parser("summary", help="List all entries (ID + title)")
+    p_summary.add_argument("-n", "--limit", type=int, help="Show only top N entries (newest first)")
 
     p_get = sub.add_parser("get", help="Get full content of one entry")
-    p_get.add_argument("id", help="Entry ID (e.g., Q-003 or just 3)")
+    p_get.add_argument("id", help="Entry ID (e.g., Q-0003 or just 3)")
 
     p_append = sub.add_parser("append", help="Append a new entry")
     p_append.add_argument("--category", "-c", help="Category (default: Other)")
@@ -329,6 +343,11 @@ def main():
     p_next = sub.add_parser("next-id", help="Print next available ID")
     sub.add_parser("format", help="Validate qa.db structure")
 
+    p_delete = sub.add_parser("delete", help="Delete one entry by ID (with confirmation prompt)")
+    p_delete.add_argument("id", help="Entry ID (e.g., Q-0003 or just 3)")
+    p_delete.add_argument("-f", "--force", action="store_true", help="Skip confirmation prompt")
+    p_delete.add_argument("--dry-run", action="store_true", help="Show what would be deleted without deleting")
+
     args = parser.parse_args()
 
     commands = {
@@ -338,6 +357,7 @@ def main():
         "append": cmd_append,
         "update": cmd_update,
         "next-id": cmd_next_id,
+        "delete": cmd_delete,
         "format": cmd_format,
     }
     commands[args.command](args)

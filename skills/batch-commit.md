@@ -17,7 +17,7 @@ metadata:
 
 ## 触发条件
 
-- 用户说："按Q-XXX提交"、"分批commit这些修改"、"先提交Q-001再提交Q-002"
+- 用户说："按Q-XXXX提交"、"分批commit这些修改"、"先提交Q-0001再提交Q-0002"
 - 需要为QA条目生成带描述性commit message的提交
 
 ## 工作流程
@@ -37,7 +37,7 @@ cd <project-root> && python scripts/qa_tool.py get <ID>
 | 分组依据 | 示例 |
 |---------|------|
 | 同一功能模块 | 前端组件 + 对应API接口 |
-| 同一问题修复 | 修复Q-XXX涉及的所有文件 |
+| 同一问题修复 | 修复Q-XXXX涉及的所有文件 |
 | 不同业务领域 | 订单模块 / 用户模块 / 支付模块 |
 | 配置变更 | 单独一组，不与其他代码混合 |
 
@@ -64,7 +64,7 @@ print(msg.encode('utf-8').decode('utf-8'))  # 显式UTF-8
 
 调用方式（description 用英文）：
 ```bash
-echo '{"id":"Q-001","files":["app.py","config.yaml"],"description":"Fix save button not responding"}' | python scripts/gen_commit_msg.py
+echo '{"id":"Q-0001","files":["app.py","config.yaml"],"description":"Fix save button not responding"}' | python scripts/gen_commit_msg.py
 ```
 
 ### 4. 分批执行提交
@@ -73,20 +73,20 @@ echo '{"id":"Q-001","files":["app.py","config.yaml"],"description":"Fix save but
 ```bash
 cd <project-root>
 git add <file1> <file2>
-git commit -m "$(echo '{"id":"Q-001","files":["app.py"],"description":"Fix save button not responding"}' | python scripts/gen_commit_msg.py)"
+git commit -m "$(echo '{"id":"Q-0001","files":["app.py"],"description":"Fix save button not responding"}' | python scripts/gen_commit_msg.py)"
 ```
 
 **第二批**（如有）：
 ```bash
 git add <file3> <file4>
-git commit -m "$(echo '{"id":"Q-002","files":["component.vue"],"description":"Add export feature"}' | python scripts/gen_commit_msg.py)"
+git commit -m "$(echo '{"id":"Q-0002","files":["component.vue"],"description":"Add export feature"}' | python scripts/gen_commit_msg.py)"
 ```
 
 ### 5. 每批提交后确认
 
 每批提交完成后，输出：
 ```
-✅ 第 N 批已提交: Q-XXX
+✅ 第 N 批已提交: Q-XXXX
    文件: file1, file2
    Commit: <hash>
 ```
@@ -108,11 +108,11 @@ git commit -m "$(echo '{"id":"Q-002","files":["component.vue"],"description":"Ad
 
 ## 示例
 
-用户："请帮我按Q-001和Q-002分批提交代码"
+用户："请帮我按Q-0001和Q-0002分批提交代码"
 
-1. 查询Q-001和Q-002的涉及文件
+1. 查询Q-0001和Q-0002的涉及文件
 2. 按功能分组：
-   - 批1: Q-001的文件（保存按钮修复）
-   - 批2: Q-002的文件（导出功能）
+   - 批1: Q-0001的文件（保存按钮修复）
+   - 批2: Q-0002的文件（导出功能）
 3. 逐批执行git add + git commit
 4. 每批完成后询问用户是否继续
