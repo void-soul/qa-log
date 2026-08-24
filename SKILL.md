@@ -130,26 +130,29 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 | `setup` | — | 首次使用：建 `qa.db` + 复制 `QALogBrowser.exe` 到项目根目录 |
 | `summary` | `-n/--limit` | 列出所有条目（ID + 标题）。`-n N` 只显示前 N 条（按 qid DESC）|
 | `get <ID>` | `ID`（如 `Q-0003` 或 `3`） | 查看单条完整内容 |
-| `append` | `-c/--category`, `-q/--question` | 新增条目（ID 自动递增，状态默认 Pending） |
-| `update <ID>` | `-q/--question`, `-s/--status`, `-r/--root-cause`, `-a/--answer`, `-f/--files` | 更新已有条目（自动写 `updated_at`） |
+| `append` | `--json`（推荐）, `-c/--category`, `-q/--question` | 新增条目（ID 自动递增，状态默认 Pending） |
+| `update <ID>` | `--json`（推荐）, `-q/--question`, `-s/--status`, `-r/--root-cause`, `-a/--answer`, `-f/--files` | 更新已有条目（自动写 `updated_at`） |
 | `next-id` | — | 打印下一个可用 ID |
 | `delete <ID>` | `-f/--force`, `--dry-run` | 删除单条（默认有确认提示）。`--force` 跳过确认；`--dry-run` 只显示不删 |
 | `format` | — | 校验并报告 qa.db 条目结构问题 |
 
 > **`delete` 安全设计**：默认打印待删条目 + ID + 日期 + 类别 + 状态 + 标题，要求键入 `y` 确认。脚本/Python 调用请加 `-f` 跳过交互；不确定时用 `--dry-run` 预览。
 
-**`update` 可修改字段说明：**
-- `-q/--question`：覆盖「现象/需求」字段（即新增时写入的问题文本）。**用于修正乱码或改写需求描述**。
-- `-s/--status`：状态（`Pending` / `已解决待验证` / `已验证` / `WontFix` / `Unresolved`）。
-- `-r/--root-cause`：根因分析（覆盖「根因」）。
-- `-a/--answer`：解决方案步骤（覆盖「解决方案」）。
-- `-f/--files`：变更文件表（覆盖「涉及文件」，`| File | Change |` 格式）。
+**`update` 可修改字段说明（`--json` 键名与 `-x` 参数一一对应）：**
 
-所有文本参数中字面量 `\\n` 会被展开为真实换行；多行内容建议用 `\\n` 拼接。
+| `--json` 键 | 命令行参数 | 含义 |
+|------------|-----------|------|
+| `question` | `-q` | 覆盖「现象/需求」字段（用于修正乱码或改写需求描述） |
+| `status` | `-s` | 状态（`Pending` / `已解决待验证` / `已验证` / `WontFix` / `Unresolved`） |
+| `root_cause` | `-r` | 根因分析（覆盖「根因」） |
+| `solution` | `-a` | 解决方案步骤（覆盖「解决方案」） |
+| `files` | `-f` | 变更文件表（覆盖「涉及文件」，`| File | Change |` 格式） |
 
-> **乱码预防：** 所有脚本已强制使用UTF-8编码（`sys.stdout.reconfigure(encoding="utf-8")`）。
-> Windows环境下如需在命令行直接使用，请先执行 `chcp 65001` 切换到UTF-8代码页。
-> 推荐通过 Python 脚本调用避免命令行编码问题（中文参数勿直接在 shell 中传递）。
+> **建议用 `--json` 一次传多个字段**，例如：
+> `update Q-0005 --json '{"status":"已解决待验证","root_cause":"...","solution":"...","files":"..."}'`
+> 命令行参数优先级高于 JSON 字段（两者都传时以命令行参数为准）。JSON 中多行文本用 `\n` 转义。
+
+> **乱码预防（强制）：** Windows 命令行传中文极易乱码（ANSI/GBK 代码页）。**凡含中文的字段一律用 `--json` 传递**，绝不要用 `-q/-r/-a/-f/-s "中文"` 形式放命令行参数里。`--json` 可用 `--json '{...}'` 字符串或 stdin 管道 `--json < file.json`；用 Python 脚本调用时 `json.dumps({...}, ensure_ascii=False)` 生成。
 
 ## 数据模型（qa_entries 表）
 
@@ -169,6 +172,25 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 | `updated_at` | TEXT | 最后修改时间，`update` 时自动 |
 
 > **类别与状态无外键约束**，可自由取任意字符串，但建议遵循上表约定。`check` / `format` 子技能会校验。
+
+### 📌 权威状态机（MANDATORY — 唯一合法值，`update -s`/`--json` 强校验）
+
+`status` 字段**只允许**以下 5 个值，agent 改状态时必须严格遵守，**不得使用"已解决"等非规范值**（脚本会拒绝写入）：
+
+| 状态 | 含义 | 何时设置 | 谁设置 |
+|------|------|---------|--------|
+| `Pending` | 待解决 | 记录问题创建时（默认） | `append` 自动 |
+| `已解决待验证` | 已解决，等待验证 | **解决问题、填写方案后** | agent（fill-solution） |
+| `已验证` | 经验证正确 | **审核确认方案正确且无回归后** | agent（check） |
+| `WontFix` | 决定不修复 | 问题被判定不需要解决 | agent |
+| `Unresolved` | 无法解决 | 尝试后仍无法解决 | agent |
+
+**强制规则：**
+1. **默认 `Pending`**——`append` 创建时自动设置，agent 不要手动改。
+2. **解决问题后设 `已解决待验证`**——不是"已解决"，没有"已解决"这个状态。
+3. **只有经过 check 审核确认后才设 `已验证`**——agent 不能自己直接设"已验证"，除非执行了审核。
+4. `update -s` 传入不在上述 5 个值内的状态会**被拒绝**并提示（含相近词提示，如 `已解决`→提示 `已验证`）。
+5. 前端 Tauri 编辑弹窗的下拉框只列出这 5 个合法值。
 
 ## CLI 参考（scripts/qa_md_sync.py）
 

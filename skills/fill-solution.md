@@ -33,9 +33,13 @@ cd <project-root> && python scripts/qa_tool.py summary
 ```
 
 ### Step 2: Run the update command
+**如果根因/解决方案/涉及文件含中文，必须用 `--json` 传递，禁止用 `-r/-a/-f` 直接传中文**（Windows 命令行 ANSI/GBK 编码会导致乱码）：
+
 ```bash
-cd <project-root> && python scripts/qa_tool.py update <ID> --status "已解决待验证" --root-cause "<root cause>" --answer "<solution steps>" --files "<files table>"
+cd <project-root> && python scripts/qa_tool.py update <ID> --json '{"status":"已解决待验证","root_cause":"<根因>","solution":"<解决方案>","files":"<文件表>"}'
 ```
+
+> ⚠️ **编码规则（强制）**：含中文的字段一律走 `--json`（UTF-8）传递，**绝不要**用 `-r/-a/-f "中文"` 形式把中文直接放命令行参数里。用 Python 脚本调用时，用 `json.dumps({...}, ensure_ascii=False)` 生成 JSON 字符串再传给 `--json`，确保 UTF-8。
 
 **Replace placeholders:**
 - `<project-root>`: actual path to project directory
@@ -43,6 +47,8 @@ cd <project-root> && python scripts/qa_tool.py update <ID> --status "已解决�
 - `<root cause>`: explanation of why the bug occurred, with **bold** around identifiers
 - `<solution steps>`: ordered list of steps taken (1. 2. 3.)
 - `<files table>`: Markdown table of changed files
+
+> **多行内容提示**：JSON 中多行文本用 `\n` 转义；`--json` 也支持通过 stdin 管道传入（`python qa_tool.py update <ID> --json < file.json`）。
 
 ## Format Rules (CRITICAL)
 
@@ -55,16 +61,28 @@ cd <project-root> && python scripts/qa_tool.py update <ID> --status "已解决�
   | **path/to/file.ext** | What was changed: **method/property** value |
   ```
 
-## Windows/Git Bash Note
+## Windows/Git Bash Note（编码规则）
 
-Use **single quotes** around parameter values containing backticks. Double quotes will strip them:
+**在 Windows 上，中文内容绝不要直接放命令行参数里**（`-r/-a/-f/-q/-s`），会因 ANSI/GBK 代码页产生乱码。一律用 `--json` 传递：
 
 ```bash
-# Correct — single quotes preserve backticks
-cd /path/to/project && python scripts/qa_tool.py update Q-0005 -s "已解决待验证" -r '**Width** 属性设置错误' -a '1. 修改 **app.py** 中 **Width** 为 340' -f '| File | Change |\n|------|--------|\n| **app.py** | **Width** 250 -> 340 |'
+# 正确 — 用 --json 传所有含中文的字段（UTF-8，无乱码）
+cd /path/to/project && python scripts/qa_tool.py update Q-0005 --json '{"status":"已解决待验证","root_cause":"**Width** 属性设置错误","solution":"1. 修改 **app.py** 中 **Width** 为 340","files":"| File | Change |\n|------|--------|\n| **app.py** | **Width** 250 -> 340 |"}'
 
-# Wrong — double quotes eat backticks
-python scripts/qa_tool.py update Q-0005 -s "已解决待验证" -r "**Width** property"
+# 错误 — 命令行直接传中文，Windows 下会乱码
+python scripts/qa_tool.py update Q-0005 -r "**Width** 属性设置错误"
+```
+
+**推荐做法**：用 Python 脚本调用并传 JSON，彻底规避命令行编码：
+```python
+import json, subprocess
+payload = json.dumps({
+    "status": "已解决待验证",
+    "root_cause": "**Width** 属性设置错误",
+    "solution": "1. 修改 **app.py** 中 **Width** 为 340",
+    "files": "| File | Change |\n|------|--------|\n| **app.py** | **Width** 250 -> 340 |",
+}, ensure_ascii=False)
+subprocess.run(["python", "scripts/qa_tool.py", "update", "Q-0005", "--json", payload])
 ```
 
 ## 提交说明生成（Commit Message）
@@ -87,18 +105,24 @@ git commit -m "fix: #Q-0001 Fix save button not responding"
 - **分批次提交**：不同功能点分多个commit，不要一次性提交所有改动
 - **使用Python脚本生成**避免命令行编码问题
 
-## Status Values
+## Status Values（MANDATORY 状态机）
+
+`status` 字段**只允许** 5 个值，**不存在"已解决"这个状态**。填写解决方案后，**必须设为 `已解决待验证`**：
 
 | Status | Meaning |
 |--------|---------|
 | `Pending` | 待解决 — Question logged, not yet solved (default) |
-| `已解决待验证` | 已解决待验证 — Solution recorded, awaiting verification |
-| `已验证` | 已验证 — Verified correct by reviewer |
+| `已解决待验证` | 已解决待验证 — Solution recorded, awaiting verification（**本阶段填完方案后设置**） |
+| `已验证` | 已验证 — Verified correct by reviewer（**仅 check 审核确认后设置**，本阶段不要设） |
+| `WontFix` | 决定不修复 |
+| `Unresolved` | 无法解决 |
+
+> ⚠️ **错误示例（禁止）**：`--status "已解决"` → 会被脚本拒绝。正确应为 `"已解决待验证"`。
 
 ## Example
 
 ```bash
-cd /path/to/project && python scripts/qa_tool.py update Q-0005 -s "已解决待验证" -r '播放端和录制端是两个独立项目，初始开发时分别设置了不同的左栏宽度（播放端 **250**，录制端 **340**）' -a '1. 在 **BlotEyes.Player/MainWindow.xaml** 中定位左侧面板的 **ColumnDefinition**\n2. 将主网格左列 **Width="250"** 改为 **Width="340"**\n3. 将非客户端区标题列 **Width="250"** 改为 **Width="340"**\n4. 与录制端对齐' -f '| File | Change |\n|------|--------|\n| **BlotEyes.Player/MainWindow.xaml** | 左栏 **ColumnDefinition** **Width** 250 -> 340（两处） |'
+cd /path/to/project && python scripts/qa_tool.py update Q-0005 --json '{"status":"已解决待验证","root_cause":"播放端和录制端是两个独立项目，初始开发时分别设置了不同的左栏宽度（播放端 **250**，录制端 **340**）","solution":"1. 在 **BlotEyes.Player/MainWindow.xaml** 中定位左侧面板的 **ColumnDefinition**\n2. 将主网格左列 **Width=250** 改为 **Width=340**\n3. 与录制端对齐","files":"| File | Change |\n|------|--------|\n| **BlotEyes.Player/MainWindow.xaml** | 左栏 **ColumnDefinition** **Width** 250 -> 340（两处） |"}'
 ```
 
 Output:

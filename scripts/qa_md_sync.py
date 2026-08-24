@@ -44,13 +44,18 @@ CANONICAL = {
 
 
 def map_status(raw):
+    """把 QA.md 里的状态映射到权威状态机。
+
+    只允许 Pending / 已解决待验证 / 已验证 / WontFix / Unresolved。
+    非规范值保守地映射为「已解决待验证」（sync 无法确认是否验证过，不擅自标「已验证」）。
+    """
     raw = (raw or "").strip()
     if raw in VALID_STATUSES:
         return raw
-    if raw == "Resolved":
-        return "已验证"  # legacy "solved" status
-    # Q-0103/Q-0104/Q-0105 put a title in the status slot; treat as completed.
-    return "已验证"
+    if raw.lower() in ("resolved", "solved", "已解决", "已修复", "done", "fixed", "complete", "completed"):
+        return "已解决待验证"
+    # 其它异常值（如标题占位）也保守处理，不标「已验证」
+    return "已解决待验证"
 
 
 # ── QA.md parsing ────────────────────────────────────────────────────────────

@@ -30,6 +30,7 @@ Subcommands:
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -49,6 +50,8 @@ from db import (
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # 兼容：其它脚本可能用 qa_tool.connect 导入
 connect = _db_connect
@@ -56,8 +59,35 @@ connect = _db_connect
 # 兼容：DEFAULT_CWD_DB 仍按 cwd/qa.db 解析
 DEFAULT_CWD_DB = os.path.join(os.getcwd(), DB_NAME)
 
-# Valid status values
-VALID_STATUSES = {"Pending", "已解决待验证", "已验证", "WontFix", "Unresolved"}
+# Valid status values — 权威状态机（唯一合法集合）
+# 规范：Pending(待解决) -> 已解决待验证 -> 已验证；WontFix/Unresolved 为终止态
+VALID_STATUSES = ("Pending", "已解决待验证", "已验证", "WontFix", "Unresolved")
+
+# 常见非规范同义词 -> 提示应改用哪个规范状态（用于报错提示，不自动替换）
+STATUS_SUGGESTIONS = {
+    "已解决": "已验证",
+    "解决": "已验证",
+    "已修复": "已验证",
+    "修复": "已验证",
+    "待验证": "已解决待验证",
+    "待确认": "已解决待验证",
+    "待检查": "已解决待验证",
+    "resolved": "已验证",
+    "done": "已验证",
+    "fixed": "已验证",
+}
+
+
+def normalize_status(status, strict=False):
+    """把用户输入的状态标准化到规范集合；非法时返回 None（或 strict 时报错提示）。"""
+    s = (status or "").strip()
+    if s in VALID_STATUSES:
+        return s
+    # 尝试大小写/空白规范化（英文枚举）
+    for v in VALID_STATUSES:
+        if s.lower() == v.lower():
+            return v
+    return None
 
 # Placeholder for unsolved fields
 PLACEHOLDER = "[待填写]"
@@ -176,13 +206,47 @@ def format_entry(row):
     return "\n".join(lines)
 
 
+def read_json_input(args):
+    """读取 JSON 数据（用于 append/update）。
+
+    来源优先级：
+      1. --json 指定 JSON 字符串
+      2. stdin 管道传入的 JSON
+      3. 无则返回 None
+    中文内容建议通过 JSON 方式传入，避免 Windows 命令行 ANSI/GBK 编码导致乱码。
+    """
+    raw = None
+    from_json_flag = getattr(args, "json", None)
+    if from_json_flag:
+        raw = from_json_flag
+    elif not sys.stdin.isatty():
+        raw = sys.stdin.read().strip()
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            if from_json_flag:
+                print("Error: --json expects a JSON object", file=sys.stderr)
+                sys.exit(1)
+            return None
+        return data
+    except json.JSONDecodeError as e:
+        if from_json_flag:
+            print(f"Error: invalid JSON: {e}", file=sys.stderr)
+            sys.exit(1)
+        return None
+
+
 def cmd_append(args):
     """Append a new entry with auto-generated ID."""
     conn, created = ensure_qa_db(args.db)
     qid = get_next_qid(conn)
     today = date.today().isoformat()
-    category = args.category or "Other"
-    question = (args.question or "").strip()
+    data = read_json_input(args) or {}
+    # 优先级：命令行参数 > JSON 字段
+    category = args.category or data.get("category") or "Other"
+    question = (args.question or data.get("question") or "").strip()
 
     conn.execute(
         """INSERT INTO qa_entries (qid, date, category, status, phenomenon)
@@ -207,11 +271,37 @@ def cmd_update(args):
     def expand(v):
         return v.replace("\\n", "\n") if v else v
 
-    new_status = args.status or row["status"]
-    new_phenomenon = expand(args.question) if args.question is not None else row["phenomenon"]
-    new_root_cause = expand(args.root_cause) if args.root_cause is not None else (row["root_cause"] or "")
-    new_solution = expand(args.answer) if args.answer is not None else (row["solution"] or "")
-    new_files = expand(args.files) if args.files is not None else (row["files"] or "")
+    data = read_json_input(args) or {}
+    # 优先级：命令行参数 > JSON 字段 > 保留原值
+    new_status = args.status or data.get("status") or row["status"]
+
+    # 状态强校验：只接受权威状态机集合；非法值拒绝写入并提示
+    if "status" in (data or {}) or args.status is not None:
+        norm = normalize_status(new_status)
+        if norm is None:
+            hint = STATUS_SUGGESTIONS.get(new_status.strip().lower())
+            msg = (f"Invalid status '{new_status}'. Allowed: {', '.join(VALID_STATUSES)}."
+                   + (f" Did you mean '{hint}'?" if hint else ""))
+            print(msg, file=sys.stderr)
+            conn.close()
+            sys.exit(2)
+        new_status = norm
+    new_phenomenon = expand(
+        args.question if args.question is not None else
+        (data.get("question") if "question" in data else None)
+    ) if (args.question is not None or "question" in data) else row["phenomenon"]
+    new_root_cause = expand(
+        args.root_cause if args.root_cause is not None else
+        (data.get("root_cause") if "root_cause" in data else None)
+    ) if (args.root_cause is not None or "root_cause" in data) else (row["root_cause"] or "")
+    new_solution = expand(
+        args.answer if args.answer is not None else
+        (data.get("solution") if "solution" in data else None)
+    ) if (args.answer is not None or "solution" in data) else (row["solution"] or "")
+    new_files = expand(
+        args.files if args.files is not None else
+        (data.get("files") if "files" in data else None)
+    ) if (args.files is not None or "files" in data) else (row["files"] or "")
 
     conn.execute(
         """UPDATE qa_entries
@@ -330,15 +420,17 @@ def main():
 
     p_append = sub.add_parser("append", help="Append a new entry")
     p_append.add_argument("--category", "-c", help="Category (default: Other)")
-    p_append.add_argument("--question", "-q", help="Question/phenomenon text")
+    p_append.add_argument("--question", "-q", help="Question/phenomenon text (avoid Chinese via CLI)")
+    p_append.add_argument("--json", help="JSON object via stdin or string, e.g. {\"question\":\"...\"}. PREFERRED for Chinese.")
 
     p_update = sub.add_parser("update", help="Update an existing entry")
     p_update.add_argument("id", help="Entry ID")
-    p_update.add_argument("--question", "-q", help="New question/phenomenon text")
+    p_update.add_argument("--question", "-q", help="New question/phenomenon text (avoid Chinese via CLI)")
     p_update.add_argument("--status", "-s", help="New status (Pending, 已解决待验证, 已验证, WontFix, Unresolved)")
     p_update.add_argument("--root-cause", "-r", help="Root cause analysis")
     p_update.add_argument("--answer", "-a", help="Solution steps")
     p_update.add_argument("--files", "-f", help="Files changed table (| File | Change |)")
+    p_update.add_argument("--json", help="JSON object via stdin or string, e.g. {\"root_cause\":\"...\",\"solution\":\"...\"}. PREFERRED for Chinese.")
 
     p_next = sub.add_parser("next-id", help="Print next available ID")
     sub.add_parser("format", help="Validate qa.db structure")
