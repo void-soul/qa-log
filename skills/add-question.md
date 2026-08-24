@@ -39,10 +39,13 @@ If the user's request has multiple distinct sub-questions, you will create multi
 **Rule of thumb:** Each entry should be answerable independently. If fixing one doesn't resolve the other, they're separate entries.
 
 ### Step 3: Run the append command
-For each question, run:
+For each question, run. **如果现象/需求含中文，必须用 `--json` 传递，禁止用 `-q` 直接传中文**（Windows 命令行 ANSI/GBK 编码会导致乱码）：
+
 ```bash
-cd <project-root> && python scripts/qa_tool.py append --category "<Category>" --question "<One-line question>"
+cd <project-root> && python scripts/qa_tool.py append --json '{"category":"<Category>","question":"<问题描述，可为中文>"}'
 ```
+
+> ⚠️ **编码规则（强制）**：中文内容一律走 `--json`（UTF-8）传递，**绝不要**用 `-q "中文"` 形式把中文直接放命令行参数里。用 Python 脚本调用时，用 `json.dumps({...}, ensure_ascii=False)` 生成 JSON 字符串再传给 `--json`，确保 UTF-8。
 
 **Replace `<project-root>` with the actual path to the project directory.**
 
@@ -67,7 +70,7 @@ The output will be `Created Q-NNNNN` (4-digit, e.g. `Q-0021`). Record this ID fo
 User says: "修复保存按钮点击无响应的问题"
 
 ```bash
-cd /path/to/project && python scripts/qa_tool.py append --category "Bug Fix" --question "保存按钮点击无响应"
+cd /path/to/project && python scripts/qa_tool.py append --json '{"category":"Bug Fix","question":"保存按钮点击无响应"}'
 ```
 
 Output:

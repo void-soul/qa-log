@@ -61,9 +61,11 @@ Check:
 
 ### Step 5: Make a Decision
 
+> ⚠️ **状态机强制规则**：`status` 只允许 `Pending` / `已解决待验证` / `已验证` / `WontFix` / `Unresolved` 这 5 个值，**不存在"已解决"**。`update -s` 传非规范值会被脚本拒绝。只有**审核确认**后才设 `已验证`；发现问题保持 `已解决待验证` 并反馈。
+
 | Result | Action |
 |--------|--------|
-| Fix is correct and complete | Update status to `已验证` |
+| Fix is correct and complete | Update status to `已验证`（仅审核通过时） |
 | Fix has issues but can be improved | Keep `已解决待验证`, provide feedback |
 | Fix is wrong or incomplete | Update status to `Pending`, explain why |
 
