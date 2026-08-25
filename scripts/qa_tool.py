@@ -52,6 +52,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stdin, "reconfigure"):
+    # 强制 stdin 按 UTF-8 解码（Windows 默认可能用 GBK，导致管道/重定向的中文乱码）
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 
 # 兼容：其它脚本可能用 qa_tool.connect 导入
 connect = _db_connect
@@ -217,12 +220,17 @@ def read_json_input(args):
     """
     raw = None
     from_json_flag = getattr(args, "json", None)
-    if from_json_flag:
+    if from_json_flag == "__STDIN__":
+        # bare --json：从 stdin 管道读取（彻底避免命令行传中文）
+        raw = sys.stdin.read().strip()
+    elif from_json_flag:
         raw = from_json_flag
     elif not sys.stdin.isatty():
         raw = sys.stdin.read().strip()
     if not raw:
         return None
+    # 剥离可能的 UTF-8 BOM（PowerShell 管道到原生程序时会带 BOM）
+    raw = raw.lstrip("\ufeff")
     try:
         data = json.loads(raw)
         if not isinstance(data, dict):
@@ -421,7 +429,8 @@ def main():
     p_append = sub.add_parser("append", help="Append a new entry")
     p_append.add_argument("--category", "-c", help="Category (default: Other)")
     p_append.add_argument("--question", "-q", help="Question/phenomenon text (avoid Chinese via CLI)")
-    p_append.add_argument("--json", help="JSON object via stdin or string, e.g. {\"question\":\"...\"}. PREFERRED for Chinese.")
+    p_append.add_argument("--json", nargs="?", const="__STDIN__", default=None,
+                          help="JSON object as string, or bare --json to read from stdin. PREFERRED for Chinese.")
 
     p_update = sub.add_parser("update", help="Update an existing entry")
     p_update.add_argument("id", help="Entry ID")
@@ -430,7 +439,8 @@ def main():
     p_update.add_argument("--root-cause", "-r", help="Root cause analysis")
     p_update.add_argument("--answer", "-a", help="Solution steps")
     p_update.add_argument("--files", "-f", help="Files changed table (| File | Change |)")
-    p_update.add_argument("--json", help="JSON object via stdin or string, e.g. {\"root_cause\":\"...\",\"solution\":\"...\"}. PREFERRED for Chinese.")
+    p_update.add_argument("--json", nargs="?", const="__STDIN__", default=None,
+                          help="JSON object as string, or bare --json to read from stdin. PREFERRED for Chinese.")
 
     p_next = sub.add_parser("next-id", help="Print next available ID")
     sub.add_parser("format", help="Validate qa.db structure")

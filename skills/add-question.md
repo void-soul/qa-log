@@ -15,6 +15,8 @@ metadata:
 
 Phase 1 of the qa-log workflow. Logs a new question to `qa.db` (SQLite) with `Pending` status.
 
+> **规则**：编码（中文走 `--json`）、状态机等统一遵循 [`references/qa-rules.md`](../references/qa-rules.md)。
+
 > **v2.0**：数据源由 `QA.md` 改为 `qa.db`（SQLite），位于**项目根目录**。运行脚本前先 `cd <project-root>`。
 
 ## When to Use
@@ -39,13 +41,14 @@ If the user's request has multiple distinct sub-questions, you will create multi
 **Rule of thumb:** Each entry should be answerable independently. If fixing one doesn't resolve the other, they're separate entries.
 
 ### Step 3: Run the append command
-For each question, run. **如果现象/需求含中文，必须用 `--json` 传递，禁止用 `-q` 直接传中文**（Windows 命令行 ANSI/GBK 编码会导致乱码）：
+For each question, run. **中文现象/需求必须用 Python `subprocess` + bare `--json`（stdin）传递，绝不能放命令行参数或 PowerShell 管道里**（编码规则见 [`references/qa-rules.md`](../references/qa-rules.md)）：
 
-```bash
-cd <project-root> && python scripts/qa_tool.py append --json '{"category":"<Category>","question":"<问题描述，可为中文>"}'
+```python
+import json, subprocess
+payload = json.dumps({"category": "Bug Fix", "question": "中文现象"}, ensure_ascii=False)
+subprocess.run(["python", "scripts/qa_tool.py", "append", "--json"],
+               input=payload, encoding="utf-8")
 ```
-
-> ⚠️ **编码规则（强制）**：中文内容一律走 `--json`（UTF-8）传递，**绝不要**用 `-q "中文"` 形式把中文直接放命令行参数里。用 Python 脚本调用时，用 `json.dumps({...}, ensure_ascii=False)` 生成 JSON 字符串再传给 `--json`，确保 UTF-8。
 
 **Replace `<project-root>` with the actual path to the project directory.**
 
@@ -69,8 +72,11 @@ The output will be `Created Q-NNNNN` (4-digit, e.g. `Q-0021`). Record this ID fo
 
 User says: "修复保存按钮点击无响应的问题"
 
-```bash
-cd /path/to/project && python scripts/qa_tool.py append --json '{"category":"Bug Fix","question":"保存按钮点击无响应"}'
+```python
+import json, subprocess
+subprocess.run(["python", "scripts/qa_tool.py", "append", "--json"],
+               input=json.dumps({"category": "Bug Fix", "question": "保存按钮点击无响应"}, ensure_ascii=False),
+               encoding="utf-8")
 ```
 
 Output:

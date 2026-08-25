@@ -15,6 +15,8 @@ metadata:
 
 当用户说 "请检查Q-XXXX" 或类似请求时，从 `qa.db` 提取QA条目并进行彻底的代码审查，验证解决方案是否真正解决问题且没有引入新问题。**检查完成后必须运行 `format` 校验条目结构**。
 
+> **规则**：状态机、授权（设 `已验证` / 提交需用户允许）、提交格式等统一遵循 [`references/qa-rules.md`](../references/qa-rules.md)。
+
 > **v2.0**：数据源由 `QA.md` 改为 `qa.db`（SQLite），位于**项目根目录**。运行脚本前先 `cd <project-root>`。
 
 ## What to Do
@@ -61,46 +63,34 @@ Check:
 
 ### Step 5: Make a Decision
 
-> ⚠️ **状态机强制规则**：`status` 只允许 `Pending` / `已解决待验证` / `已验证` / `WontFix` / `Unresolved` 这 5 个值，**不存在"已解决"**。`update -s` 传非规范值会被脚本拒绝。只有**审核确认**后才设 `已验证`；发现问题保持 `已解决待验证` 并反馈。
+设 `已验证` / 提交需遵循 [`../references/qa-rules.md`](../references/qa-rules.md) 的授权铁律与状态机（仅 `Pending` / `已解决待验证` / `已验证` / `WontFix` / `Unresolved`）。
 
 | Result | Action |
 |--------|--------|
-| Fix is correct and complete | Update status to `已验证`（仅审核通过时） |
+| Fix is correct and complete | 展示 diff，**征得用户允许后**才设 `已验证` |
 | Fix has issues but can be improved | Keep `已解决待验证`, provide feedback |
 | Fix is wrong or incomplete | Update status to `Pending`, explain why |
 
 ### Step 6: Update the QA Entry
 
-Use the `terminal` tool:
-
 ```bash
-# If verified correct
+# 设"已验证"必须先获用户授权；"已解决待验证"/"Pending" 无需授权
 cd <project-root> && python scripts/qa_tool.py update <ID> --status "已验证"
-
-# If issues found - provide detailed feedback
 cd <project-root> && python scripts/qa_tool.py update <ID> --status "已解决待验证" --answer "Revised solution: ..."
-
-# If fix is wrong - reopen
 cd <project-root> && python scripts/qa_tool.py update <ID> --status "Pending"
 ```
 
 ### Step 7: Format QA Entry (MANDATORY)
 
-**必须校验 qa.db 条目结构**，确保：
-- 引用代码、文件的地方使用 **粗体** 包裹（不是反引号）
-- 多步骤解决方案使用有序列表 `1. 2. 3.`
-- 表格格式正确（`涉及文件` 部分）
-- 状态值合法（`Pending` / `已解决待验证` / `已验证` / `WontFix` / `Unresolved`）
-
 ```bash
 cd <project-root> && python scripts/qa_tool.py format
 ```
 
-**如果校验发现问题，必须通过 `qa_tool.py update` 修复对应条目**。
+若发现问题，通过 `qa_tool.py update` 修复。格式规范（粗体引用、有序列表、文件表格）详见 `qa-log/skills/format-doc`。
 
-### Step 8: Ask for Commit (CRITICAL)
+### Step 8: Ask for Commit
 
-**When verified correct**, you MUST ask the user before committing:
+检查通过后**必须**先问用户是否提交（授权铁律，见 [`../references/qa-rules.md`](../references/qa-rules.md)）：
 
 ```
 检查通过！涉及以下文件：
@@ -110,34 +100,19 @@ cd <project-root> && python scripts/qa_tool.py format
 是否提交这些更改？(是/否)
 ```
 
-**等待用户回复。** 只有用户明确说"是"、"提交"、"确认"时才能继续。
+**等待用户明确回复**，只有说"是"、"提交"、"确认"才能继续。
 
 ### Step 9: Commit (Only if user confirms)
 
-If user confirms, use the `terminal` tool:
+用户确认后，用 `gen_commit_msg.py` 生成**英文** message 并提交（规则见 [`../references/qa-rules.md`](../references/qa-rules.md) 第 4 节）：
 
 ```bash
 cd <project-root>
 git diff --name-only
 git add <files from QA entry>
-git commit -m "<type>: #Q-XXXX <description>"
-git push (if needed)
+MSG=$(echo '{"id":"Q-XXXX","type":"fix","description":"<english desc>"}' | python <skill>/scripts/gen_commit_msg.py)
+git commit -m "$MSG"
 ```
-
-**提交信息格式（强制）：Commit message 一律使用英文**
-
-| 类型 | 格式 | 示例 |
-|------|------|------|
-| Bug 修复 | `fix: #Q-XXXX <desc>` | `fix: #Q-0029 Fix save button not responding` |
-| 新功能 | `feat: #Q-XXXX <desc>` | `feat: #Q-0030 Add export feature` |
-| 重构 | `refactor: #Q-XXXX <desc>` | `refactor: #Q-0031 Split god file into modules` |
-| 测试 | `test: #Q-XXXX <desc>` | `test: #Q-0032 Add unit tests` |
-
-**规则：**
-- **必须包含 QA ID**（如 `#Q-0029`）
-- **Commit message 使用英文**（描述部分不要写中文）
-- 只提交 QA 条目中列出的文件
-- 永远不要自动提交 — 必须先询问用户
 
 ## QA 格式规范（CRITICAL）
 
@@ -238,22 +213,12 @@ After checking, report:
 User says: "请检查Q-0029"
 
 ```bash
-# Step 1: Extract entry
-cd /path/to/project && python scripts/qa_tool.py get Q-0029
-
-# Step 4: Read actual code
-read_file(path="/path/to/project/src/some_file.py")
-
-# Step 6: Update if verified
+cd /path/to/project && python scripts/qa_tool.py get Q-0029   # 提取条目
+# ... 读取源码审查 ...
+# 设"已验证"前先征得用户允许
 cd /path/to/project && python scripts/qa_tool.py update Q-0029 --status "已验证"
-
-# Step 7: Format document
 cd /path/to/project && python scripts/qa_tool.py format
-
-# Step 8: Ask for commit
-# 输出: "检查通过！涉及以下文件：- **app.py** 是否提交？(是/否)"
-# 等待用户回复...
-
-# Step 9: Commit only if user says yes
-cd /path/to/project && git add app.py && git commit -m "fix: #Q-0029 修复保存按钮无响应"
+# 用户确认提交后，生成英文 message 并提交
+MSG=$(echo '{"id":"Q-0029","type":"fix","description":"Fix save button not responding"}' | python scripts/gen_commit_msg.py)
+cd /path/to/project && git add app.py && git commit -m "$MSG"
 ```

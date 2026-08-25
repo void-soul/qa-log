@@ -15,6 +15,8 @@ metadata:
 
 当用户要求按QA条目分批次提交代码时使用此技能。核心原则：**按改动内容分组，而非一次性全部提交**。
 
+> **规则**：授权（绝不自动提交、每批提交需用户允许）、commit message 英文生成等统一遵循 [`../references/qa-rules.md`](../references/qa-rules.md) 第 2、4 节。
+
 ## 触发条件
 
 - 用户说："按Q-XXXX提交"、"分批commit这些修改"、"先提交Q-0001再提交Q-0002"
@@ -41,30 +43,12 @@ cd <project-root> && python scripts/qa_tool.py get <ID>
 | 不同业务领域 | 订单模块 / 用户模块 / 支付模块 |
 | 配置变更 | 单独一组，不与其他代码混合 |
 
-### 3. 生成commit message（CRITICAL：无乱码 + 英文）
+### 3. 生成commit message（英文，经 gen_commit_msg.py）
 
-Commit message 的 `description` 一律使用**英文**。使用Python脚本确保UTF-8编码：
+description 一律英文，用 `gen_commit_msg.py` 生成：
 
-```python
-# scripts/gen_commit_msg.py
-import sys
-import json
-
-data = json.load(sys.stdin)
-qid = data['id']
-files = data['files']
-change_type = data.get('type', 'fix')  # fix, feat, refactor, test
-
-# 根据文件内容推断简洁描述（英文）
-desc = data.get('description', f"Fix issue #{qid}")
-
-msg = f"{change_type}: #{qid} {desc}"
-print(msg.encode('utf-8').decode('utf-8'))  # 显式UTF-8
-```
-
-调用方式（description 用英文）：
 ```bash
-echo '{"id":"Q-0001","files":["app.py","config.yaml"],"description":"Fix save button not responding"}' | python scripts/gen_commit_msg.py
+echo '{"id":"Q-0001","files":["app.py"],"description":"Fix save button not responding"}' | python scripts/gen_commit_msg.py
 ```
 
 ### 4. 分批执行提交
@@ -84,21 +68,7 @@ git commit -m "$(echo '{"id":"Q-0002","files":["component.vue"],"description":"A
 
 ### 5. 每批提交后确认
 
-每批提交完成后，输出：
-```
-✅ 第 N 批已提交: Q-XXXX
-   文件: file1, file2
-   Commit: <hash>
-```
-
-等待用户确认后再继续下一批。
-
-## 乱码预防措施
-
-1. **始终使用Python处理中文参数**，不在shell中直接传递中文
-2. **commit message通过stdin传递**，避免命令行编码问题
-3. **统一使用UTF-8编码**，脚本开头设置 `sys.stdout.reconfigure(encoding="utf-8")`
-4. **Windows环境下**，使用 `chcp 65001` 切换代码页
+每批提交完成后，输出 commit hash，**等待用户确认后再继续下一批**（授权铁律见 [`../references/qa-rules.md`](../references/qa-rules.md) 第 2 节）。
 
 ## 与 secure-git-commit 的协作
 

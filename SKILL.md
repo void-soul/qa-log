@@ -17,11 +17,9 @@ metadata:
 
 **核心原则：** 每个解决的问题都成为可搜索的参考。
 
-**提交规则：** git commit message 一律使用**英文**编写（描述部分不要写中文），并包含 QA ID 追溯标记（如 `fix: #Q-0001 Fix save button`）。详见 `skills/check.md` 与 `skills/batch-commit.md`。
+> **统一规则（必读）：** 状态机、授权铁律、中文编码、提交规范等**所有强制规则统一收敛在 [`references/qa-rules.md`](references/qa-rules.md)**。本文件与子技能只保留流程步骤，冲突时以 `references/qa-rules.md` 为准。其中最重要的一条：**禁止自动提交，验证/提交前必须征得用户明确允许**。
 
-> **存储说明（v3.0）**：数据源已从 `QA.md`（Markdown）迁移为 `qa.db`（SQLite 单文件数据库）。
-> `qa.db` 位于**使用此 skill 的项目根目录**（不是 skill 目录）。脚本默认读写 `./qa.db`，
-> 因此运行脚本前请先 `cd <project-root>`。Tauri 桌面浏览器读取同一个 `qa.db`。
+> **存储说明：** 数据源为 `qa.db`（SQLite），位于**使用此 skill 的项目根目录**（不是 skill 目录）。脚本默认读写 `./qa.db`，运行前请先 `cd <project-root>`。Tauri 桌面浏览器读取同一个 `qa.db`。
 
 ## 首次使用初始化（MANDATORY）
 
@@ -62,6 +60,7 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 │   ├── batch-commit.md                  # 分批提交
 │   └── md-sync.md                       # QA.md 合并
 ├── references/                          # 参考文档
+│   ├── qa-rules.md                      # ★ 权威规则（状态机/授权/编码/提交）——唯一规则源
 │   ├── qa-md-template.md                # QA.md Markdown 模板
 │   └── skill-organization-pattern.md    # skill 组织模式说明
 └── tauri-app/                           # Tauri 源码（开发/重建用）
@@ -89,9 +88,8 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 
 **工作流程：**
 1. 加载 `qa-log/skills/check` 技能
-2. 提取条目、分析、审查代码、做出判断、更新状态
-3. **询问用户是否提交**（检查通过后必须）
-4. 仅在用户确认后提交涉及的代码文件
+2. 提取条目、分析、审查代码、做出判断、展示 diff
+3. 设 `已验证` / 提交前，遵循 `references/qa-rules.md` 的授权铁律（须获用户明确允许）
 
 ### 辅助能力
 
@@ -148,11 +146,16 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 | `solution` | `-a` | 解决方案步骤（覆盖「解决方案」） |
 | `files` | `-f` | 变更文件表（覆盖「涉及文件」，`| File | Change |` 格式） |
 
-> **建议用 `--json` 一次传多个字段**，例如：
-> `update Q-0005 --json '{"status":"已解决待验证","root_cause":"...","solution":"...","files":"..."}'`
+> **建议用 Python `subprocess` + bare `--json`（stdin）一次传多个字段**（命令行/管道无中文，彻底防乱码）：
+> ```python
+> import json, subprocess
+> subprocess.run(["python", "scripts/qa_tool.py", "update", "Q-0005", "--json"],
+>                input=json.dumps({"status":"已解决待验证","root_cause":"...","solution":"...","files":"..."}, ensure_ascii=False),
+>                encoding="utf-8")
+> ```
 > 命令行参数优先级高于 JSON 字段（两者都传时以命令行参数为准）。JSON 中多行文本用 `\n` 转义。
 
-> **乱码预防（强制）：** Windows 命令行传中文极易乱码（ANSI/GBK 代码页）。**凡含中文的字段一律用 `--json` 传递**，绝不要用 `-q/-r/-a/-f/-s "中文"` 形式放命令行参数里。`--json` 可用 `--json '{...}'` 字符串或 stdin 管道 `--json < file.json`；用 Python 脚本调用时 `json.dumps({...}, ensure_ascii=False)` 生成。
+> **编码规则：** 含中文的字段一律用 `--json` 传递（避免 Windows ANSI/GBK 乱码），详见 [`references/qa-rules.md`](references/qa-rules.md) 第 3 节。
 
 ## 数据模型（qa_entries 表）
 
@@ -173,24 +176,9 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 
 > **类别与状态无外键约束**，可自由取任意字符串，但建议遵循上表约定。`check` / `format` 子技能会校验。
 
-### 📌 权威状态机（MANDATORY — 唯一合法值，`update -s`/`--json` 强校验）
+### 状态机
 
-`status` 字段**只允许**以下 5 个值，agent 改状态时必须严格遵守，**不得使用"已解决"等非规范值**（脚本会拒绝写入）：
-
-| 状态 | 含义 | 何时设置 | 谁设置 |
-|------|------|---------|--------|
-| `Pending` | 待解决 | 记录问题创建时（默认） | `append` 自动 |
-| `已解决待验证` | 已解决，等待验证 | **解决问题、填写方案后** | agent（fill-solution） |
-| `已验证` | 经验证正确 | **审核确认方案正确且无回归后** | agent（check） |
-| `WontFix` | 决定不修复 | 问题被判定不需要解决 | agent |
-| `Unresolved` | 无法解决 | 尝试后仍无法解决 | agent |
-
-**强制规则：**
-1. **默认 `Pending`**——`append` 创建时自动设置，agent 不要手动改。
-2. **解决问题后设 `已解决待验证`**——不是"已解决"，没有"已解决"这个状态。
-3. **只有经过 check 审核确认后才设 `已验证`**——agent 不能自己直接设"已验证"，除非执行了审核。
-4. `update -s` 传入不在上述 5 个值内的状态会**被拒绝**并提示（含相近词提示，如 `已解决`→提示 `已验证`）。
-5. 前端 Tauri 编辑弹窗的下拉框只列出这 5 个合法值。
+`status` 字段只允许 5 个值（`Pending` / `已解决待验证` / `已验证` / `WontFix` / `Unresolved`），不存在"已解决"等其它状态。状态流转、各状态的设置者、以及 `已解决` 等非规范值的处理，统一见 [`references/qa-rules.md`](references/qa-rules.md) 第 1 节。
 
 ## CLI 参考（scripts/qa_md_sync.py）
 
