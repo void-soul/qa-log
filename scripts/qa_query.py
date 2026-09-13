@@ -107,6 +107,59 @@ def act_qa_get(conn, a):
     emit(True, {"entry": dict(row)})
 
 
+def act_qa_update(conn, a):
+    """更新 QA 记录。字段经 stdin JSON 传入（中文内容不走命令行，规避乱码）。"""
+    import db as qa_db
+
+    raw = sys.stdin.read() or ""
+    try:
+        data = json.loads(raw)
+    except Exception as e:
+        emit(False, error=f"invalid stdin JSON: {e}")
+        return
+    qid = qa_db.normalize_id(str(data.get("qid", "")))
+    fields = {
+        k: str(data.get(k) or "")
+        for k in ("date", "category", "status", "phenomenon", "root_cause", "solution", "files")
+        if k in data
+    }
+    if not fields:
+        emit(False, error="no fields to update")
+        return
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    params = list(fields.values()) + [qid]
+    try:
+        cur = conn.execute(
+            f"UPDATE qa_entries SET {sets}, updated_at = datetime('now','localtime') WHERE qid = ?",
+            params,
+        )
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        emit(False, error=f"update failed: {e}")
+        return
+    if cur.rowcount == 0:
+        emit(False, error=f"not found: {qid}")
+        return
+    row = conn.execute("SELECT * FROM qa_entries WHERE qid = ?", (qid,)).fetchone()
+    emit(True, {"entry": dict(row) if row else None})
+
+
+def act_qa_delete(conn, a):
+    import db as qa_db
+
+    qid = qa_db.normalize_id(a.qid or "")
+    try:
+        cur = conn.execute("DELETE FROM qa_entries WHERE qid = ?", (qid,))
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        emit(False, error=f"delete failed: {e}")
+        return
+    if cur.rowcount == 0:
+        emit(False, error=f"not found: {qid}")
+        return
+    emit(True, {"deleted": qid})
+
+
 def act_log_list(conn, a):
     sql = ("SELECT id, session_id, project, seq, event, role, title, content, meta, created_at "
            "FROM agent_log")
@@ -186,6 +239,8 @@ def act_stats(conn, a):
 ACTIONS = {
     "qa-list": act_qa_list,
     "qa-get": act_qa_get,
+    "qa-update": act_qa_update,
+    "qa-delete": act_qa_delete,
     "log-list": act_log_list,
     "log-sessions": act_log_sessions,
     "projects": act_projects,
