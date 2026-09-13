@@ -8,6 +8,10 @@
   get_next_qid()      4 位零填充下一个 qid
   normalize_id()      把 "1" / "Q-001" / "Q-0001" 都标准化为 "Q-0001"
 
+两张表：
+  qa_entries   QA 记录（问题/根因/解决方案/涉及文件）
+  agent_log    Agent 会话日志（由 CodeBuddy hooks 自动追加，见 agent_log_hook.py）
+
 迁移覆盖范围（与 Tauri 后端 open_db() 一致）：
   1. 旧 schema: id INTEGER PK AUTOINCREMENT + qid TEXT UNIQUE
      -> 新 schema: qid TEXT PRIMARY KEY (无 id 列)
@@ -39,6 +43,36 @@ CREATE TABLE qa_entries (
 )
 """
 
+# Agent 会话日志表（由 CodeBuddy hooks 自动写入）
+#
+# 设计要点：
+#  - event: user_prompt(用户消息) / tool_use(工具调用) / assistant_reply(回复摘要)
+#           / session_start / session_end
+#  - title : 概要（用户消息前若干字），便于列表快速浏览
+#  - content: 正文（用户消息全文 / 工具调用摘要 / 回复摘要）
+#  - meta  : JSON 附加信息（工具名、token、文件列表等）
+#  - seq   : 同一 session 内的自增序号，用于稳定排序与增量去重
+AGENT_LOG_DDL = """
+CREATE TABLE IF NOT EXISTS agent_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    project    TEXT NOT NULL DEFAULT '',
+    seq        INTEGER NOT NULL DEFAULT 0,
+    event      TEXT NOT NULL,
+    role       TEXT DEFAULT '',
+    title      TEXT DEFAULT '',
+    content    TEXT DEFAULT '',
+    meta       TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+)
+"""
+
+AGENT_LOG_INDEX_DDL = [
+    "CREATE INDEX IF NOT EXISTS idx_agent_log_session ON agent_log(session_id, seq)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_log_project ON agent_log(project, id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_log_created ON agent_log(created_at)",
+]
+
 
 def resolve_db_path(explicit=None):
     """Return the path to qa.db.
@@ -69,12 +103,18 @@ def ensure_schema(conn, verbose=False):
     """Idempotent schema migration. Safe to call on every connection open.
 
     Steps:
+      0. Ensure `agent_log` table + indexes exist (independent of qa_entries).
       1. If `qa_entries` does not exist, create it with the target schema.
       2. If the legacy `id INTEGER PK` column exists, rebuild the table
          so `qid` becomes the sole primary key.
       3. If `updated_at` column is missing, add it (NULL by default).
       4. Pad any 3-digit qid (length=5) to 4-digit (length=6).
     """
+    # 0. agent_log 表（幂等，且不受 qa_entries 早返回影响）
+    conn.execute(AGENT_LOG_DDL)
+    for _ddl in AGENT_LOG_INDEX_DDL:
+        conn.execute(_ddl)
+
     if not _table_exists(conn):
         if verbose:
             print("[ensure_schema] Creating qa_entries with target schema")
