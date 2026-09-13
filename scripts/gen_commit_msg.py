@@ -41,7 +41,9 @@ def generate_message(data):
 def main():
     parser = argparse.ArgumentParser(description="Generate commit message from JSON data")
     parser.add_argument('--input', '-i', help='Input JSON file or string')
-    parser.add_argument('--type', '-t', default='fix', help='Commit type (fix/feat/refactor/test)')
+    # 必须是 None：非空默认值会让下面的 `if args.type:` 恒为真，
+    # 从而用命令行默认值（原为 'fix'）覆盖 stdin / --input 里传进来的 type。
+    parser.add_argument('--type', '-t', default=None, help='Commit type (fix/feat/refactor/test)')
     parser.add_argument('--id', '-q', help='QA ID (e.g., Q-0001)')
     parser.add_argument('--desc', '-d', help='Description')
     
