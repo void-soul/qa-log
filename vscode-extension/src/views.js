@@ -118,6 +118,64 @@ const COMMON_CSS = `
   .tl-row.e-assistant_reply::before { background: #238636; }
   .tl-role { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; opacity: .6; }
   .tl-body { margin-top: 3px; white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+  /* 会话原文浏览（中间面板：上列表下详情） */
+  .sessd {
+    flex: 2 1 0; min-height: 120px; overflow-y: auto;
+    padding: 10px 16px 24px;
+    border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,.35));
+    background: var(--vscode-editor-background, transparent);
+  }
+  .sessd h4 { margin: 12px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; opacity: .7; font-weight: 600; }
+  .sessd h4:first-child { margin-top: 0; }
+  .sessd pre {
+    margin: 0; padding: 8px 10px; overflow-x: auto;
+    background: var(--vscode-textCodeBlock-background, rgba(128,128,128,.12));
+    border-radius: 4px; font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px; white-space: pre-wrap; word-break: break-word;
+  }
+  .sessd pre.clamp { max-height: 12em; overflow: hidden; cursor: pointer; }
+  .dragbar {
+    flex: 0 0 4px; cursor: row-resize; background: transparent;
+    border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,.35));
+  }
+  .dragbar:hover, .dragbar.active {
+    background: var(--vscode-focusBorder, rgba(128,128,128,.45));
+  }
+  /* Markdown 渲染（QA 详情字段） */
+  .md { line-height: 1.65; word-break: break-word; }
+  .md p { margin: 0 0 8px; }
+  .md p:last-child { margin-bottom: 0; }
+  .md h1, .md h2, .md h3, .md h4 { margin: 12px 0 6px; line-height: 1.4; }
+  .md ul, .md ol { margin: 4px 0 8px; padding-left: 22px; }
+  .md code {
+    font-family: var(--vscode-editor-font-family, monospace); font-size: 12px;
+    background: var(--vscode-textCodeBlock-background, rgba(128,128,128,.15));
+    padding: 1px 4px; border-radius: 3px;
+  }
+  .md pre {
+    background: var(--vscode-textCodeBlock-background, rgba(128,128,128,.12));
+    padding: 8px 10px; border-radius: 4px; overflow-x: auto; margin: 6px 0;
+  }
+  .md pre code { background: transparent; padding: 0; }
+  .md table { border-collapse: collapse; margin: 6px 0; }
+  .md th, .md td { border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.4)); padding: 4px 8px; }
+  .md blockquote { margin: 6px 0; padding: 2px 12px; border-left: 3px solid var(--vscode-panel-border, rgba(128,128,128,.4)); opacity: .85; }
+  .md a { color: var(--vscode-textLink-foreground); }
+  .md .ph { opacity: .45; font-style: italic; }
+  /* QA 详情编辑表单 */
+  .qaform { padding: 12px 18px 24px; max-width: 980px; }
+  .qaform label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; opacity: .7; margin: 10px 0 3px; font-weight: 600; }
+  .qaform label:first-child { margin-top: 0; }
+  .qaform input, .qaform select, .qaform textarea {
+    width: 100%; box-sizing: border-box;
+    background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, rgba(128,128,128,.4));
+    border-radius: 4px; padding: 5px 8px; font-size: 13px;
+    font-family: var(--vscode-font-family); outline: none;
+  }
+  .qaform textarea { min-height: 90px; resize: vertical; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; line-height: 1.55; }
+  .qaform .row { display: flex; gap: 10px; }
+  .qaform .row > div { flex: 1; }
   .hidden { display: none !important; }
 `;
 
@@ -148,6 +206,7 @@ const COMMON_JS = `
       for (let i = from; i < to; i++) {
         const el = renderRow(items[i], i);
         el.style.top = (i * ROW_H) + 'px';
+        el.dataset.idx = String(i);
         if (i === selectedIdx) el.classList.add('active');
         frag.appendChild(el);
       }
@@ -155,15 +214,31 @@ const COMMON_JS = `
     }
     container.addEventListener('scroll', () => update(), { passive: true });
 
+    function pick(idx) {
+      selectedIdx = idx;
+      select(idx);
+      if (onPick) onPick(items[idx], idx);
+    }
+
+    // 点击行 → pick（事件委托；行是动态挂载的，不能逐行绑事件）
+    container.addEventListener('click', (e) => {
+      const row = e.target && e.target.closest ? e.target.closest('.vrow') : null;
+      if (!row || row.parentElement !== spacer) return;
+      const idx = parseInt(row.dataset.idx, 10);
+      if (!isNaN(idx)) pick(idx);
+    });
+
+    function select(idx) {
+      selectedIdx = idx;
+      Array.from(spacer.children).forEach((el) => el.classList.remove('active'));
+      const el = spacer.children[idx - (visible ? visible[0] : 0)];
+      if (el) el.classList.add('active');
+    }
+
     return {
       render() { spacer.style.height = (items.length * ROW_H) + 'px'; visible = null; update(); },
-      select(idx) {
-        selectedIdx = idx;
-        Array.from(spacer.children).forEach((el) => el.classList.remove('active'));
-        const el = spacer.children[idx - (visible ? visible[0] : 0)];
-        if (el) el.classList.add('active');
-      },
-      pick(idx) { selectedIdx = idx; this.select(idx); if (onPick) onPick(items[idx], idx); },
+      select: select,
+      pick: pick,
     };
   }
 
@@ -178,7 +253,7 @@ const COMMON_JS = `
   }
 `;
 
-function page(nonce, csp, bodyHtml, scriptHtml) {
+function page(nonce, csp, bodyHtml, scriptHtml, preScriptHtml) {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -190,6 +265,7 @@ function page(nonce, csp, bodyHtml, scriptHtml) {
 <body>
 ${bodyHtml}
 <script nonce="${nonce}">
+${preScriptHtml || ''}
 ${COMMON_JS}
 ${scriptHtml}
 </script>
@@ -277,30 +353,100 @@ function qaListHtml(data, nonce) {
   return page(nonce, csp, body, script);
 }
 
-// ── 中间面板：QA 详情 ──────────────────────────────────────────────────────
+// ── 中间面板：QA 详情（Markdown 渲染 + 浏览/编辑双模式 + 删除） ────────────
 
-function qaDetailHtml(entry, nonce) {
+function qaDetailHtml(entry, nonce, markedSrc) {
   const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
-  const body = `<div class="detail" id="d"></div>`;
+  const body = `
+  <div class="detail" id="view"></div>
+  <div class="qaform hidden" id="edit"></div>`;
   const script = `
   const E = ${jsonScript(entry)};
   const STATUS_CLASS = ${jsonScript(STATUS_CLASS)};
+  const STATUSES = ['Pending', '已解决待验证', '已验证', 'WontFix', 'Unresolved'];
 
-  const stCls = (STATUS_CLASS[E.status] || '').split(' ')[1] || 'b-pending';
-  $('d').innerHTML =
-    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
-    + '<span style="font-weight:600;font-size:15px;color:var(--vscode-textLink-foreground)">' + esc(E.qid) + '</span>'
-    + '<span class="badge ' + stCls + '">' + esc(E.status || '') + '</span>'
-    + '<span class="sub">' + esc(E.date || '') + '</span>'
-    + '<span class="sub">' + esc(E.category || '') + '</span>'
-    + '<button class="btn" id="cp">复制 QID</button></div>'
-    + '<h4>现象 / 需求</h4><pre>' + esc(E.phenomenon || '') + '</pre>'
-    + '<h4>根因</h4><pre>' + esc(E.root_cause || '—') + '</pre>'
-    + '<h4>解决方案</h4><pre>' + esc(E.solution || '—') + '</pre>'
-    + '<h4>涉及文件</h4><pre>' + esc(E.files || '—') + '</pre>';
-  attachClamp($('d'));
-  $('cp').addEventListener('click', () => vscode.postMessage({ type: 'copy', text: E.qid }));`;
-  return page(nonce, csp, body, script);
+  // Markdown 渲染：先 HTML 转义再 parse，用户输入的 <script> 不会执行
+  function md(text) {
+    const raw = (text == null ? '' : String(text)).trim();
+    if (!raw || raw === '[待填写]') return '<p class="ph">[待填写]</p>';
+    const escaped = esc(raw);
+    if (typeof marked === 'undefined') return '<pre style="white-space:pre-wrap">' + escaped + '</pre>';
+    try { return marked.parse(escaped, { breaks: true, gfm: true }); }
+    catch (e) { return '<pre>' + escaped + '</pre>'; }
+  }
+
+  function stCls(st) { return (STATUS_CLASS[st] || '').split(' ')[1] || 'b-pending'; }
+
+  function renderView() {
+    const v = $('view');
+    v.innerHTML =
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">'
+      + '<span style="font-weight:600;font-size:15px;color:var(--vscode-textLink-foreground)">' + esc(E.qid) + '</span>'
+      + '<span class="badge ' + stCls(E.status) + '">' + esc(E.status || '') + '</span>'
+      + '<span class="sub">' + esc(E.date || '') + '</span>'
+      + '<span class="sub">' + esc(E.category || '') + '</span>'
+      + '<span style="flex:1"></span>'
+      + '<button class="btn" id="cp">复制 QID</button>'
+      + '<button class="btn" id="ed">编辑</button>'
+      + '<button class="btn" id="del">删除</button></div>'
+      + '<h4>现象 / 需求</h4><div class="md">' + md(E.phenomenon) + '</div>'
+      + '<h4>根因</h4><div class="md">' + md(E.root_cause) + '</div>'
+      + '<h4>解决方案</h4><div class="md">' + md(E.solution) + '</div>'
+      + '<h4>涉及文件</h4><div class="md">' + md(E.files) + '</div>';
+    $('cp').addEventListener('click', () => vscode.postMessage({ type: 'copy', text: E.qid }));
+    $('ed').addEventListener('click', renderEdit);
+    $('del').addEventListener('click', () => vscode.postMessage({ type: 'delete', qid: E.qid }));
+  }
+
+  function renderEdit() {
+    const f = $('edit');
+    const opt = (st) => '<option value="' + esc(st) + '"' + (st === E.status ? ' selected' : '') + '>' + esc(st) + '</option>';
+    const ta = (id, label, val) =>
+      '<label for="' + id + '">' + label + '</label><textarea id="' + id + '">' + esc(val || '') + '</textarea>';
+    f.innerHTML =
+      '<div class="row">'
+      + '<div><label for="fdate">日期</label><input id="fdate" value="' + esc(E.date || '') + '"></div>'
+      + '<div><label for="fcat">分类</label><input id="fcat" value="' + esc(E.category || '') + '"></div>'
+      + '<div><label for="fst">状态（状态机）</label><select id="fst">' + STATUSES.map(opt).join('') + '</select></div>'
+      + '</div>'
+      + ta('fphen', '现象 / 需求', E.phenomenon)
+      + ta('fcause', '根因', E.root_cause)
+      + ta('fsol', '解决方案', E.solution)
+      + ta('ffiles', '涉及文件', E.files)
+      + '<div style="margin-top:12px;display:flex;gap:8px">'
+      + '<button class="btn primary" id="sv">保存</button>'
+      + '<button class="btn" id="cx">取消</button></div>';
+    $('view').classList.add('hidden');
+    f.classList.remove('hidden');
+    $('sv').addEventListener('click', () => {
+      vscode.postMessage({ type: 'save', data: {
+        qid: E.qid,
+        date: $('fdate').value.trim(),
+        category: $('fcat').value.trim(),
+        status: $('fst').value,
+        phenomenon: $('fphen').value,
+        root_cause: $('fcause').value,
+        solution: $('fsol').value,
+        files: $('ffiles').value,
+      } });
+    });
+    $('cx').addEventListener('click', () => {
+      f.classList.add('hidden');
+      v.classList.remove('hidden');
+    });
+  }
+
+  // Markdown 内的链接 → 系统浏览器打开
+  document.addEventListener('click', (e) => {
+    const a = e.target && e.target.closest ? e.target.closest('a') : null;
+    if (a && a.href && /^https?:/i.test(a.href)) {
+      e.preventDefault();
+      vscode.postMessage({ type: 'openExternal', url: a.href });
+    }
+  });
+
+  renderView();`;
+  return page(nonce, csp, body, script, markedSrc || '');
 }
 
 // ── 侧边栏：Agent 日志（用户输入历史，时间倒序） ────────────────────────────
@@ -424,4 +570,142 @@ function logDetailHtml(log, nonce) {
   return page(nonce, csp, body, script);
 }
 
-module.exports = { qaListHtml, qaDetailHtml, logListHtml, logDetailHtml };
+// ── 中间面板：会话原文浏览（上=虚拟滚动列表，下=选中消息全文） ───────────────
+
+function sessionHtml(data, nonce) {
+  const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+  const body = `
+  <div class="col">
+    <div class="toolbar">
+      <span class="sub" id="info"></span>
+      <span class="sub" id="hint">点击行在下方看全文 · 滚动按需加载</span>
+    </div>
+    <div class="vlist" id="list" style="flex: 3 1 0"></div>
+    <div class="dragbar" id="drag" title="拖动调整上下比例"></div>
+    <div class="sessd" id="d" style="flex: 2 1 0"><div class="empty">（选择消息查看全文）</div></div>
+  </div>`;
+  const script = `
+  const DATA = ${jsonScript(data)};
+  const skeleton = DATA.skeleton || [];
+  const contents = {};
+  let lastRange = '';
+  let pendingShow = (typeof DATA.targetIdx === 'number' && DATA.targetIdx >= 0) ? DATA.targetIdx : null;
+
+  function summarize(role, parts) {
+    if (role === 'tool') {
+      const r = parts.find((x) => x.type === 'tool-result');
+      if (r) return (r.name || 'tool') + ' · ' + String(r.text || '').replace(/\\s+/g, ' ').slice(0, 90);
+      return 'tool';
+    }
+    const texts = parts.filter((x) => x.type === 'text').map((x) => x.text).join(' ').replace(/\\s+/g, ' ').trim();
+    const call = parts.find((x) => x.type === 'tool-call');
+    const reasoning = parts.filter((x) => x.type === 'reasoning').map((x) => x.text).join(' ').replace(/\\s+/g, ' ').trim();
+    if (texts) return texts.slice(0, 200);
+    if (call) return '🔧 ' + (call.name || 'tool') + ' · ' + String(call.text || '').replace(/\\s+/g, ' ').slice(0, 80);
+    if (reasoning) return '💭 ' + reasoning.slice(0, 120);
+    return '(空)';
+  }
+
+  function showDetail(idx) {
+    const m = skeleton[idx];
+    if (!m) return;
+    const parts = contents[m.id] || [];
+    const titles = { text: m.role === 'user' ? '用户消息' : '回复正文', reasoning: '思考过程',
+      'tool-call': '工具调用（参数）', 'tool-result': '工具结果', error: '读取失败' };
+    let html = '<h4>#' + (idx + 1) + ' · ' + esc(m.role) + '</h4>';
+    if (!parts.length) { html += '<pre>（内容加载中…）</pre>'; }
+    for (const p of parts) {
+      html += '<h4>' + esc(titles[p.type] || p.type) + '</h4><pre>' + esc(p.text || '(空)') + '</pre>';
+    }
+    $('d').innerHTML = html;
+    attachClamp($('d'));
+    $('d').scrollTop = 0;
+  }
+
+  const list = virtualList($('list'), skeleton,
+    (m, idx) => {
+      const el = document.createElement('div');
+      el.className = 'vrow';
+      let dot = '#6e7681';
+      if (m.role === 'user') dot = '#1f6feb';
+      else if (m.role === 'assistant') dot = '#238636';
+      const p = contents[m.id];
+      const label = p ? summarize(m.role, p) : '…';
+      el.title = label;
+      el.innerHTML = '<span class="dot" style="background:' + dot + '"></span>'
+        + '<span class="text">' + esc((idx + 1) + '. ' + label) + '</span>'
+        + '<span class="sub">' + esc(m.role) + '</span>';
+      if (idx === DATA.targetIdx) el.style.fontWeight = '600';
+      return el;
+    },
+    (m, idx) => { list.select(idx); showDetail(idx); });
+
+  function requestRange() {
+    const top = Math.max(0, $('list').scrollTop);
+    const h = $('list').clientHeight || 400;
+    const from = Math.max(0, Math.floor(top / ROW_H) - 12);
+    const to = Math.min(skeleton.length, Math.ceil((top + h) / ROW_H) + 12);
+    const key = from + ':' + to;
+    if (key === lastRange) return;
+    lastRange = key;
+    vscode.postMessage({ type: 'range', from: from, to: to });
+  }
+
+  $('list').addEventListener('scroll', requestRange, { passive: true });
+
+  window.addEventListener('message', (ev) => {
+    const m = ev.data || {};
+    if (m.type === 'window' && m.items) {
+      Object.assign(contents, m.items);
+      list.render();
+      requestRange();
+      if (pendingShow != null && contents[skeleton[pendingShow] && skeleton[pendingShow].id]) {
+        showDetail(pendingShow);
+        pendingShow = null;
+      }
+    }
+  });
+
+  $('info').textContent = '会话 ' + (DATA.sessionId || '') + ' · ' + skeleton.length + ' 条消息'
+    + (DATA.targetIdx >= 0 ? ' · 已定位 #' + (DATA.targetIdx + 1) : ' · 未找到目标消息');
+
+  // ── 上下分栏拖拽 ──
+  let dragging = null;
+  $('drag').addEventListener('mousedown', (e) => {
+    dragging = { y: e.clientY, h: $('list').getBoundingClientRect().height };
+    $('drag').classList.add('active');
+    document.body.style.cursor = 'row-resize';
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const colH = document.body.getBoundingClientRect().height - 4;
+    const nh = Math.max(80, Math.min(colH - 80, dragging.h + (e.clientY - dragging.y)));
+    $('list').style.flex = '0 0 auto';
+    $('list').style.height = nh + 'px';
+    $('d').style.flex = '1 1 0';
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = null;
+    $('drag').classList.remove('active');
+    document.body.style.cursor = '';
+    list.render();
+    requestRange();
+  });
+
+  if (pendingShow != null) {
+    // 初始定位到目标消息（列表中央），等首屏内容到达后自动展示全文
+    setTimeout(() => {
+      $('list').scrollTop = Math.max(0, DATA.targetIdx * ROW_H - ($('list').clientHeight || 400) / 2);
+      list.render();
+      list.select(DATA.targetIdx);
+      requestRange();
+    }, 30);
+  } else {
+    requestRange();
+  }`;
+  return page(nonce, csp, body, script);
+}
+
+module.exports = { qaListHtml, qaDetailHtml, logListHtml, logDetailHtml, sessionHtml };

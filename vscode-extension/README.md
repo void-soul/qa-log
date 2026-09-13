@@ -105,9 +105,13 @@ CodeBuddy 会话
 
 ## 已知限制
 
-- **Agent 回复正文无法展示**：CodeBuddy 把会话正文存在受保护的 `messages`
-  文件里（实测 Win32 `ACCESS_DENIED`）。因此 Agent 日志视图只展示
-  **用户输入历史**（回复的完成摘要在数据库中留档，未来若开放正文可补展示）。
+- **会话原文浏览**：点击日志记录会在编辑器中间区域打开会话浏览面板
+  （上列表 + 下全文）。数据来自 CodeBuddy 本地会话存储
+  （`%LOCALAPPDATA%\CodeBuddyExtension\Data\...\history\<wsHash>\<sessionId>\`，
+  `index.json` 有序骨架 + `messages/<id>.json` 正文，均可读）；tool / 思考过程
+  默认一行摘要，点击行在下方看全文；列表按需懒加载，长会话不卡。
+  旧版记录（未记录 transcript 路径）按 sessionId 扫描定位，找不到则回落到
+  简单详情面板。
 - 无法通过扩展直接跳转到 CodeBuddy 的某个会话（CodeBuddy 未提供按会话 ID
   打开的公开命令/URI，仅有 chatHistory 打开历史列表，且经评估未集成）。
 - 日志按项目严格隔离：每个项目一份 `qa.db`（与 QA 记录同库），插件只读当前

@@ -11,7 +11,7 @@
 // 建表/迁移逻辑，避开 Electron Node 对 node:sqlite 的版本差异）。
 
 const vscode = require('vscode');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -22,7 +22,13 @@ function diag(msg) {
   try { out.appendLine(`[${new Date().toLocaleTimeString()}] ${msg}`); } catch (_) { /* 忽略 */ }
 }
 
-const { qaListHtml, qaDetailHtml, logListHtml, logDetailHtml } = require('./views');
+const { qaListHtml, qaDetailHtml, logListHtml, logDetailHtml, sessionHtml } = require('./views');
+
+// marked.min.js（vendored，与 tauri-app 同源）整个内联进 webview，避免 CSP 资源加载问题
+const MARKED_SRC = (() => {
+  try { return fs.readFileSync(path.join(__dirname, '..', 'vendor', 'marked.min.js'), 'utf8'); }
+  catch (_) { return ''; }
+})();
 
 // ── CodeBuddy hooks 管理（Node 版，与 scripts/setup_hooks.py 逻辑一致） ────
 
@@ -215,6 +221,148 @@ function query(action, extra = [], dbOverride = null) {
 
 // ── 中间区域详情面板（复用同一面板，避免点开一堆积 tab） ─────────────────────
 
+/** CodeBuddy 会话本地存储根目录（会话原文 JSON） */
+const CB_HISTORY_ROOT = path.join(process.env.LOCALAPPDATA || '', 'CodeBuddyExtension', 'Data');
+
+/** 在会话存储里定位 sessionId 对应的目录。
+ * 同一 sessionId 可能有多份副本（不同窗口实例各写一份，新鲜度不同）：
+ * 优先用 hook 记录的 transcript 路径（实时副本）；否则扫描全部候选，
+ * 取 index.json 修改时间最新的那份。 */
+function findTranscriptDir(sessionId, metaTranscript) {
+  if (metaTranscript && fs.existsSync(metaTranscript)) {
+    return path.dirname(metaTranscript);
+  }
+  if (!sessionId) return null;
+  const candidates = [];
+  try {
+    for (const userDir of fs.readdirSync(CB_HISTORY_ROOT)) {
+      const ideDir = path.join(CB_HISTORY_ROOT, userDir, 'CodeBuddyIDE');
+      if (!fs.existsSync(ideDir)) continue;
+      for (const uid of fs.readdirSync(ideDir)) {
+        const histDir = path.join(ideDir, uid, 'history');
+        if (!fs.existsSync(histDir)) continue;
+        for (const ws of fs.readdirSync(histDir)) {
+          const cand = path.join(histDir, ws, sessionId);
+          const idxFile = path.join(cand, 'index.json');
+          if (fs.existsSync(idxFile)) {
+            let mtime = 0;
+            try { mtime = fs.statSync(idxFile).mtimeMs; } catch (_) { /* 忽略 */ }
+            candidates.push({ dir: cand, mtime });
+          }
+        }
+      }
+    }
+  } catch (_) { /* 存储目录不存在等 */ }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => b.mtime - a.mtime);
+  return candidates[0].dir;
+}
+
+/** 解析单条消息文件为内容片段列表（text/reasoning/tool-call/tool-result） */
+function parseMessageParts(mdir, id) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(mdir, id + '.json'), 'utf8'));
+    const inner = typeof raw.message === 'string' ? JSON.parse(raw.message) : (raw.message || {});
+    const parts = [];
+    for (const c of (inner.content || [])) {
+      if (c.type === 'text' || c.type === 'reasoning') {
+        parts.push({ type: c.type, text: String(c.text || '').slice(0, 60000) });
+      } else if (c.type === 'tool-call') {
+        parts.push({ type: 'tool-call', name: c.toolName || '', text: JSON.stringify(c.args ?? null, null, 2).slice(0, 30000) });
+      } else if (c.type === 'tool-result') {
+        parts.push({ type: 'tool-result', name: c.toolName || '', text: JSON.stringify(c.result ?? c, null, 2).slice(0, 60000) });
+      } else {
+        parts.push({ type: c.type || 'other', text: JSON.stringify(c).slice(0, 5000) });
+      }
+    }
+    return parts;
+  } catch (e) {
+    return [{ type: 'error', text: String(e.message || e) }];
+  }
+}
+
+/** 打开会话原文浏览面板（中间区域）。成功返回 true；找不到会话存储返回 false */
+function openSessionBrowser(log) {
+  let meta = {};
+  try { meta = JSON.parse(log.meta || '{}'); } catch (_) { /* 忽略 */ }
+  const dir = findTranscriptDir(log.session_id, meta.transcript);
+  if (!dir) return false;
+
+  let skeleton = [];
+  try {
+    const idx = JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8'));
+    skeleton = (idx.messages || []).filter((m) => m && m.id).map((m) => ({ id: m.id, role: m.role || '?' }));
+  } catch (_) { return false; }
+  if (!skeleton.length) return false;
+  const mdir = path.join(dir, 'messages');
+
+  // index.json 常落后于 messages/ 文件（最新消息还没进索引）：
+  // 把未被索引引用的消息文件按 mtime 追加到骨架末尾，保证最新对话可见可定位
+  try {
+    const known = new Set(skeleton.map((m) => m.id));
+    const orphans = [];
+    for (const f of fs.readdirSync(mdir)) {
+      if (!f.endsWith('.json')) continue;
+      const id = f.slice(0, -5);
+      if (known.has(id)) continue;
+      let mtime = 0;
+      try { mtime = fs.statSync(path.join(mdir, f)).mtimeMs; } catch (_) { continue; }
+      orphans.push({ id, mtime });
+    }
+    orphans.sort((a, b) => a.mtime - b.mtime);
+    for (const o of orphans) {
+      let role = 'assistant';
+      try {
+        const raw = JSON.parse(fs.readFileSync(path.join(mdir, o.id + '.json'), 'utf8'));
+        role = raw.role || 'assistant';
+      } catch (_) { /* 忽略 */ }
+      skeleton.push({ id: o.id, role });
+    }
+    if (orphans.length) diag(`会话浏览: 追加 ${orphans.length} 条未索引消息`);
+  } catch (_) { /* messages 目录缺失等 */ }
+
+  // 定位：在 user 消息正文中找包含记录正文前 60 字符的那条
+  let targetIdx = -1;
+  const needle = String(log.content || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (needle) {
+    for (let i = 0; i < skeleton.length; i++) {
+      if (skeleton[i].role !== 'user') continue;
+      const text = parseMessageParts(mdir, skeleton[i].id).map((p) => p.text || '').join(' ').replace(/\s+/g, ' ');
+      if (text.includes(needle)) { targetIdx = i; break; }
+    }
+  }
+
+  const cache = new Map();
+  const getParts = (id) => {
+    if (!cache.has(id)) cache.set(id, parseMessageParts(mdir, id));
+    if (cache.size > 3000) cache.delete(cache.keys().next().value);
+    return cache.get(id);
+  };
+
+  diag(`会话浏览: ${dir} · ${skeleton.length} 条消息 · 定位于 #${targetIdx + 1}`);
+
+  // 每次打开都是全新面板（旧面板的 range 处理器闭包了旧会话数据，不能复用）
+  if (panels['session']) {
+    try { panels['session'].dispose(); } catch (_) { /* 忽略 */ }
+  }
+  const panel = vscode.window.createWebviewPanel('qaLog.session',
+    `会话 ${String(log.session_id || '').slice(0, 8)}`,
+    { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+    { enableScripts: true, localResourceRoots: [] });
+  panel.onDidDispose(() => { delete panels['session']; }, null, []);
+  panel.webview.onDidReceiveMessage((msg) => {
+    if (!msg || msg.type !== 'range') return;
+    const from = Math.max(0, Number(msg.from) || 0);
+    const to = Math.min(skeleton.length - 1, Number(msg.to) || 0);
+    const items = {};
+    for (let i = from; i <= to; i++) items[skeleton[i].id] = getParts(skeleton[i].id);
+    panel.webview.postMessage({ type: 'window', items });
+  }, null, []);
+  panel.webview.html = sessionHtml({ skeleton, targetIdx, sessionId: log.session_id || '' }, nonce());
+  panels['session'] = panel;
+  return true;
+}
+
 const panels = {}; // kind -> WebviewPanel
 
 function showPanel(kind, title, html, onMessage) {
@@ -247,6 +395,79 @@ function nonce() {
   return s;
 }
 
+// ── QA 详情写操作（更新/删除，JSON 走 stdin 规避命令行中文乱码） ────────────
+
+let qaDetailState = null;   // {entry}
+let refreshViews = () => {}; // activate 时注入（重渲染两个侧边栏视图）
+
+function qaWrite(action, args, inputObj) {
+  const cfg = vscode.workspace.getConfiguration('qaLog');
+  const py = (cfg.get('pythonPath') || 'python').trim() || 'python';
+  const argv = [scriptPath(), '--db', dbPath(), action, ...args];
+  const run = (cmd) => execFileSync(cmd, argv, {
+    input: JSON.stringify(inputObj || {}), encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024, windowsHide: true,
+  });
+  let stdout;
+  try {
+    stdout = run(py);
+  } catch (e) {
+    if (e && e.code === 'ENOENT' && py === 'python') stdout = run('py');
+    else {
+      const so = String((e && e.stdout) || '');
+      if (so.trim()) stdout = so;
+      else throw new Error(String((e && e.message) || e));
+    }
+  }
+  const line = String(stdout || '').trim().split(/\r?\n/).filter(Boolean).pop();
+  let parsed;
+  try { parsed = JSON.parse(line); } catch (_) { throw new Error('JSON 解析失败: ' + (line || '').slice(0, 200)); }
+  if (!parsed.ok) throw new Error(parsed.error || 'unknown error');
+  return parsed.data;
+}
+
+function qaDetailMessage(msg) {
+  if (!msg) return;
+  if (msg.type === 'copy') {
+    vscode.env.clipboard.writeText(String(msg.text || ''));
+    vscode.window.setStatusBarMessage('已复制: ' + msg.text, 2000);
+    return;
+  }
+  if (msg.type === 'openExternal') {
+    try { vscode.env.openExternal(vscode.Uri.parse(String(msg.url || ''))); } catch (_) { /* 忽略 */ }
+    return;
+  }
+  if (msg.type === 'save') {
+    const d = msg.data || {};
+    try {
+      const res = qaWrite('qa-update', ['--qid', String(d.qid || '')], d);
+      qaDetailState = { entry: res.entry };
+      const panel = panels['qaDetail'];
+      if (panel) panel.webview.html = qaDetailHtml(res.entry, nonce(), MARKED_SRC);
+      vscode.window.setStatusBarMessage(`已保存 ${d.qid}`, 3000);
+      refreshViews();
+    } catch (e) {
+      vscode.window.showErrorMessage('QA Log 保存失败: ' + e.message);
+    }
+    return;
+  }
+  if (msg.type === 'delete') {
+    const qid = String(msg.qid || '');
+    vscode.window.showInformationMessage(
+      `确定删除 ${qid} 吗？此操作不可撤销。`, { modal: true }, '删除').then((pick) => {
+      if (pick !== '删除') return;
+      try {
+        qaWrite('qa-delete', ['--qid', qid]);
+        vscode.window.setStatusBarMessage(`已删除 ${qid}`, 3000);
+        if (panels['qaDetail']) { try { panels['qaDetail'].dispose(); } catch (_) { /* 忽略 */ } }
+        refreshViews();
+      } catch (e) {
+        vscode.window.showErrorMessage('QA Log 删除失败: ' + e.message);
+      }
+    });
+  }
+}
+
 // ── QA 视图（侧边栏） ──────────────────────────────────────────────────────
 
 class QaViewProvider {
@@ -269,13 +490,9 @@ class QaViewProvider {
   async openDetail(qid) {
     try {
       const data = await query('qa-get', ['--qid', qid]);
-      showPanel('qaDetail', `QA ${qid}`, qaDetailHtml(data.entry, nonce()),
-        (msg) => {
-          if (msg && msg.type === 'copy') {
-            vscode.env.clipboard.writeText(String(msg.text || ''));
-            vscode.window.setStatusBarMessage('已复制: ' + msg.text, 2000);
-          }
-        });
+      qaDetailState = { entry: data.entry };
+      showPanel('qaDetail', `QA ${qid}`, qaDetailHtml(data.entry, nonce(), MARKED_SRC),
+        qaDetailMessage);
     } catch (e) {
       vscode.window.showErrorMessage(`QA Log: ${e.message}`);
     }
@@ -342,6 +559,8 @@ class LogViewProvider {
         vscode.window.showWarningMessage(`日志记录不存在: #${id}`);
         return;
       }
+      // 优先打开会话原文浏览（中间区域大面板）；找不到会话存储则回落旧详情
+      if (openSessionBrowser(log)) return;
       showPanel('logDetail', `输入 ${log.created_at || '#' + id}`,
         logDetailHtml(log, nonce()),
         (msg) => {
@@ -386,6 +605,7 @@ class LogViewProvider {
 function activate(context) {
   diag(`激活: workspace=${workspaceRoot()} db=${dbPath()} script=${scriptPath()}`);
   const qaProvider = new QaViewProvider(context);
+  refreshViews = () => { qaProvider.render(); logProvider.render(); };
   const logProvider = new LogViewProvider(context);
 
   context.subscriptions.push(
