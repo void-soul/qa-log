@@ -224,7 +224,7 @@ def record(ev, hook, session_id, project_root, cwd, transcript):
                 event="user_prompt", role="user",
                 title=make_title(prompt),
                 content=prompt,
-                meta={"cwd": cwd},
+                meta={"cwd": cwd, "transcript": transcript},
             )
 
         elif hook in ("Stop", "SubagentStop"):
