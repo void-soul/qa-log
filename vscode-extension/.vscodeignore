@@ -1,0 +1,7 @@
+.vscode/**
+src/**
+!src/extension.js
+!src/views.js
+**/_tmp*
+**/*.map
+.gitignore

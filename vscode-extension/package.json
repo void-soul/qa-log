@@ -1,0 +1,98 @@
+{
+  "name": "qa-log-browser",
+  "displayName": "QA Log",
+  "description": "在侧边栏浏览项目根目录 qa.db：QA 记录 + CodeBuddy Agent 会话日志",
+  "version": "0.1.0",
+  "publisher": "qa-log",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onView:qaLog.qaView",
+    "onView:qaLog.logView"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "qaLogQaContainer",
+          "title": "QA 记录",
+          "icon": "media/qa.svg"
+        },
+        {
+          "id": "qaLogLogContainer",
+          "title": "Agent 日志",
+          "icon": "media/log.svg"
+        }
+      ]
+    },
+    "views": {
+      "qaLogQaContainer": [
+        {
+          "id": "qaLog.qaView",
+          "name": "QA 记录",
+          "type": "webview"
+        }
+      ],
+      "qaLogLogContainer": [
+        {
+          "id": "qaLog.logView",
+          "name": "Agent 日志",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "qaLog.refresh",
+        "title": "QA Log: 刷新",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "qaLog.openDb",
+        "title": "QA Log: 打开 qa.db 所在目录"
+      },
+      {
+        "command": "qaLog.setupHooks",
+        "title": "QA Log: 启用/停用 Agent 会话自动记录 (hooks)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "qaLog.refresh",
+          "when": "view == qaLog.qaView || view == qaLog.logView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "QA Log",
+      "properties": {
+        "qaLog.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Python 可执行文件（用于读取 qa.db）"
+        },
+        "qaLog.dbPath": {
+          "type": "string",
+          "default": "",
+          "description": "qa.db 路径。留空则自动使用当前工作区根目录下的 qa.db"
+        },
+        "qaLog.scriptPath": {
+          "type": "string",
+          "default": "",
+          "description": "qa_query.py 路径。留空则自动在若干常见位置查找"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "npx --yes @vscode/vsce package --no-dependencies"
+  }
+}
