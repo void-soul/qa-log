@@ -281,6 +281,38 @@ function parseMessageParts(mdir, id) {
   }
 }
 
+/** 会话全文搜索索引：dir -> Map(id -> 小写文本)；首次搜索按需构建，之后走缓存 */
+const searchTextCache = new Map();
+
+function searchText(dir, id) {
+  const m = searchTextCache.get(dir);
+  return (m && m.get(id)) || '';
+}
+
+async function ensureSearchText(dir, skeleton) {
+  if (searchTextCache.size > 4) searchTextCache.clear(); // 防无限增长（极少触发）
+  if (!searchTextCache.has(dir)) searchTextCache.set(dir, new Map());
+  const cache = searchTextCache.get(dir);
+  const missing = skeleton.filter((m) => !cache.has(m.id));
+  if (!missing.length) return;
+  const mdir = path.join(dir, 'messages');
+  const t0 = Date.now();
+  const CONC = 32;
+  for (let i = 0; i < missing.length; i += CONC) {
+    const batch = missing.slice(i, i + CONC);
+    await Promise.all(batch.map(async (m) => {
+      let txt = '';
+      try {
+        const raw = JSON.parse(await fs.promises.readFile(path.join(mdir, m.id + '.json'), 'utf8'));
+        const inner = typeof raw.message === 'string' ? JSON.parse(raw.message) : (raw.message || {});
+        txt = (inner.content || []).map((c) => (c.text ? String(c.text) : '')).join('\n');
+      } catch (_) { txt = ''; }
+      cache.set(m.id, txt.slice(0, 20000).toLowerCase());
+    }));
+  }
+  diag(`会话搜索索引: ${missing.length} 条 · ${Date.now() - t0}ms`);
+}
+
 /** 打开会话原文浏览面板（中间区域）。成功返回 true；找不到会话存储返回 false */
 function openSessionBrowser(log) {
   let meta = {};
@@ -350,13 +382,28 @@ function openSessionBrowser(log) {
     { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
     { enableScripts: true, localResourceRoots: [] });
   panel.onDidDispose(() => { delete panels['session']; }, null, []);
-  panel.webview.onDidReceiveMessage((msg) => {
-    if (!msg || msg.type !== 'range') return;
-    const from = Math.max(0, Number(msg.from) || 0);
-    const to = Math.min(skeleton.length - 1, Number(msg.to) || 0);
-    const items = {};
-    for (let i = from; i <= to; i++) items[skeleton[i].id] = getParts(skeleton[i].id);
-    panel.webview.postMessage({ type: 'window', items });
+  panel.webview.onDidReceiveMessage(async (msg) => {
+    if (!msg) return;
+    if (msg.type === 'range') {
+      const from = Math.max(0, Number(msg.from) || 0);
+      const to = Math.min(skeleton.length - 1, Number(msg.to) || 0);
+      const items = {};
+      for (let i = from; i <= to; i++) items[skeleton[i].id] = getParts(skeleton[i].id);
+      panel.webview.postMessage({ type: 'window', items });
+      return;
+    }
+    if (msg.type === 'search') {
+      const q = String(msg.query || '').toLowerCase();
+      const indices = [];
+      if (q) {
+        await ensureSearchText(dir, skeleton);
+        for (let i = 0; i < skeleton.length; i++) {
+          if (searchText(dir, skeleton[i].id).includes(q)) indices.push(i);
+        }
+      }
+      diag(`会话搜索 "${msg.query}": ${indices.length} 处匹配`);
+      panel.webview.postMessage({ type: 'searchResult', indices, query: msg.query });
+    }
   }, null, []);
   panel.webview.html = sessionHtml({ skeleton, targetIdx, sessionId: log.session_id || '' }, nonce());
   panels['session'] = panel;
@@ -426,11 +473,40 @@ function qaWrite(action, args, inputObj) {
   return parsed.data;
 }
 
+/** 打开工作区文件（QA「涉及文件」里的相对路径按工作区根 / qa.db 所在目录解析） */
+async function openWorkspaceFile(rawPath, line) {
+  const raw = String(rawPath || '').trim().replace(/\\/g, '/');
+  if (!raw) return;
+  const bases = [workspaceRoot(), path.dirname(dbPath())];
+  const cands = [];
+  if (path.isAbsolute(raw)) cands.push(raw);
+  else for (const b of bases) cands.push(path.join(b, raw));
+  const hit = cands.find((c) => fs.existsSync(c));
+  if (!hit) {
+    vscode.window.showWarningMessage(`未找到文件：${cands[cands.length - 1]}`);
+    return;
+  }
+  try {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(hit));
+    const l = Math.max(0, (Number(line) || 1) - 1);
+    await vscode.window.showTextDocument(doc, {
+      preview: true,
+      selection: new vscode.Range(l, 0, l, 0),
+    });
+  } catch (e) {
+    vscode.window.showErrorMessage('打开文件失败: ' + e.message);
+  }
+}
+
 function qaDetailMessage(msg) {
   if (!msg) return;
   if (msg.type === 'copy') {
     vscode.env.clipboard.writeText(String(msg.text || ''));
     vscode.window.setStatusBarMessage('已复制: ' + msg.text, 2000);
+    return;
+  }
+  if (msg.type === 'openFile') {
+    openWorkspaceFile(msg.path, msg.line);
     return;
   }
   if (msg.type === 'openExternal') {
@@ -530,6 +606,9 @@ class LogViewProvider {
       if (!msg) return;
       if (msg.type === 'openLog') {
         this.openLog(Number(msg.id) || 0);
+      } else if (msg.type === 'copy') {
+        vscode.env.clipboard.writeText(String(msg.text || ''));
+        vscode.window.setStatusBarMessage('已复制该条记录', 2000);
       } else if (msg.type === 'hooksInstall') {
         const r = installHooks();
         this.afterHooks(r, true);

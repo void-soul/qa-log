@@ -66,6 +66,14 @@ const COMMON_CSS = `
   .vrow:hover { background: var(--vscode-list-hoverBackground); }
   .vrow.active { background: var(--vscode-list-activeSelectionBackground); }
   .vrow .text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vrow .copybtn {
+    flex: 0 0 auto; opacity: 0; border: none; background: transparent;
+    color: var(--vscode-foreground); cursor: pointer; font-size: 12px;
+    padding: 0 2px; line-height: 1; border-radius: 3px;
+  }
+  .vrow:hover .copybtn { opacity: .65; }
+  .vrow .copybtn:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.25)); }
+  .vrow.hit { box-shadow: inset 2px 0 0 var(--vscode-focusBorder, #4daafc); }
   .dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #8957e5; }
   .dot.d-resolved { background: #1f6feb; }
   .dot.d-verified { background: #238636; }
@@ -162,6 +170,12 @@ const COMMON_CSS = `
   .md blockquote { margin: 6px 0; padding: 2px 12px; border-left: 3px solid var(--vscode-panel-border, rgba(128,128,128,.4)); opacity: .85; }
   .md a { color: var(--vscode-textLink-foreground); }
   .md .ph { opacity: .45; font-style: italic; }
+  a.filelink {
+    color: var(--vscode-textLink-foreground);
+    cursor: pointer; text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  a.filelink:hover { text-decoration: underline; filter: brightness(1.15); }
   /* QA 详情编辑表单 */
   .qaform { padding: 12px 18px 24px; max-width: 980px; }
   .qaform label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; opacity: .7; margin: 10px 0 3px; font-weight: 600; }
@@ -188,7 +202,8 @@ const COMMON_JS = `
   const vscode = acquireVsCodeApi();
 
   // 虚拟滚动：固定行高，只渲染可见窗口（+overscan），上千条也只挂载几十个节点
-  function virtualList(container, items, renderRow, onPick) {
+  // onAction(kind, item, idx)：行内按钮（如 .copybtn）点击时回调，不触发行选中
+  function virtualList(container, items, renderRow, onPick, onAction) {
     const spacer = document.createElement('div');
     spacer.className = 'vspacer';
     container.textContent = '';
@@ -220,9 +235,17 @@ const COMMON_JS = `
       if (onPick) onPick(items[idx], idx);
     }
 
-    // 点击行 → pick（事件委托；行是动态挂载的，不能逐行绑事件）
+    // 点击委托：行内动作按钮优先，其次整行选中
     container.addEventListener('click', (e) => {
-      const row = e.target && e.target.closest ? e.target.closest('.vrow') : null;
+      const t = e.target;
+      const act = t && t.closest ? t.closest('.copybtn') : null;
+      if (act) {
+        const row0 = act.closest('.vrow');
+        const i0 = row0 ? parseInt(row0.dataset.idx, 10) : NaN;
+        if (!isNaN(i0) && onAction) onAction('copy', items[i0], i0);
+        return;
+      }
+      const row = t && t.closest ? t.closest('.vrow') : null;
       if (!row || row.parentElement !== spacer) return;
       const idx = parseInt(row.dataset.idx, 10);
       if (!isNaN(idx)) pick(idx);
@@ -377,6 +400,48 @@ function qaDetailHtml(entry, nonce, markedSrc) {
 
   function stCls(st) { return (STATUS_CLASS[st] || '').split(' ')[1] || 'b-pending'; }
 
+  // 把文本里的文件路径（相对/绝对，可带 :行号）变成可点击链接 → 在编辑器打开
+  const FILE_RE = /([A-Za-z0-9_@][\\w./-]*\\.(?:ts|tsx|js|jsx|mjs|cjs|py|cs|go|rs|java|kt|kts|vue|svelte|json|md|markdown|yml|yaml|sql|css|scss|less|html|cshtml|xaml|sh|ps1|bat|cmd|toml|ini|xml|txt|proto|graphql|prisma|lua|rb|php|swift|c|cc|cpp|h|hpp|dart|scala|ex|exs))(:(\\d+))?/g;
+
+  function linkifyFiles(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(n) {
+        const v = n.nodeValue;
+        if (!v || (v.indexOf('/') < 0 && v.indexOf('\\\\') < 0)) return NodeFilter.FILTER_REJECT;
+        let p = n.parentElement;
+        while (p && p !== root) {
+          if (p.tagName === 'A' || p.tagName === 'SCRIPT' || p.tagName === 'STYLE') return NodeFilter.FILTER_REJECT;
+          p = p.parentElement;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    const nodes = [];
+    let n;
+    while ((n = walker.nextNode())) nodes.push(n);
+    for (const node of nodes) {
+      const text = node.nodeValue;
+      FILE_RE.lastIndex = 0;
+      if (!FILE_RE.test(text)) continue;
+      FILE_RE.lastIndex = 0;
+      const frag = document.createDocumentFragment();
+      let last = 0, m;
+      while ((m = FILE_RE.exec(text))) {
+        if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        const a = document.createElement('a');
+        a.className = 'filelink';
+        a.textContent = m[0];
+        a.dataset.path = m[1];
+        if (m[3]) a.dataset.line = m[3];
+        a.title = '在编辑器中打开 ' + m[0];
+        frag.appendChild(a);
+        last = m.index + m[0].length;
+      }
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      if (node.parentNode) node.parentNode.replaceChild(frag, node);
+    }
+  }
+
   function renderView() {
     const v = $('view');
     v.innerHTML =
@@ -396,6 +461,7 @@ function qaDetailHtml(entry, nonce, markedSrc) {
     $('cp').addEventListener('click', () => vscode.postMessage({ type: 'copy', text: E.qid }));
     $('ed').addEventListener('click', renderEdit);
     $('del').addEventListener('click', () => vscode.postMessage({ type: 'delete', qid: E.qid }));
+    linkifyFiles(v);
   }
 
   function renderEdit() {
@@ -436,8 +502,14 @@ function qaDetailHtml(entry, nonce, markedSrc) {
     });
   }
 
-  // Markdown 内的链接 → 系统浏览器打开
+  // 点击处理：文件路径链接 → 编辑器打开；http(s) 链接 → 系统浏览器
   document.addEventListener('click', (e) => {
+    const fl = e.target && e.target.closest ? e.target.closest('a.filelink') : null;
+    if (fl) {
+      e.preventDefault();
+      vscode.postMessage({ type: 'openFile', path: fl.dataset.path, line: Number(fl.dataset.line || 0) });
+      return;
+    }
     const a = e.target && e.target.closest ? e.target.closest('a') : null;
     if (a && a.href && /^https?:/i.test(a.href)) {
       e.preventDefault();
@@ -510,10 +582,15 @@ function logListHtml(data, nonce) {
         el.title = l.title || '';
         el.innerHTML = '<span class="dot" style="background:#1f6feb"></span>'
           + '<span class="text">' + esc(l.title || '(无内容)') + '</span>'
-          + '<span class="sub">' + esc(hhmm(l.created_at)) + '</span>';
+          + '<span class="sub">' + esc(hhmm(l.created_at)) + '</span>'
+          + '<button class="copybtn" title="复制这条记录">⧉</button>';
         return el;
       },
-      (l, idx) => { list.select(idx); vscode.postMessage({ type: 'openLog', id: l.id }); });
+      (l, idx) => { list.select(idx); vscode.postMessage({ type: 'openLog', id: l.id }); },
+      (kind, l) => {
+        if (kind !== 'copy') return;
+        vscode.postMessage({ type: 'copy', text: l.content || l.title || '' });
+      });
 
     function applyFilter() {
       const kw = $('q').value.trim().toLowerCase();
@@ -577,8 +654,10 @@ function sessionHtml(data, nonce) {
   const body = `
   <div class="col">
     <div class="toolbar">
-      <span class="sub" id="info"></span>
-      <span class="sub" id="hint">点击行在下方看全文 · 滚动按需加载</span>
+      <input id="find" type="text" placeholder="搜索会话内容（回车定位）">
+      <span class="sub" id="hits"></span>
+      <button class="btn" id="prev" title="上一个匹配">↑</button>
+      <button class="btn" id="next" title="下一个匹配">↓</button>
     </div>
     <div class="vlist" id="list" style="flex: 3 1 0"></div>
     <div class="dragbar" id="drag" title="拖动调整上下比例"></div>
@@ -590,6 +669,7 @@ function sessionHtml(data, nonce) {
   const contents = {};
   let lastRange = '';
   let pendingShow = (typeof DATA.targetIdx === 'number' && DATA.targetIdx >= 0) ? DATA.targetIdx : null;
+  let hits = [], hitPos = 0, searchTimer = null, baseInfo = '';
 
   function summarize(role, parts) {
     if (role === 'tool') {
@@ -636,6 +716,7 @@ function sessionHtml(data, nonce) {
         + '<span class="text">' + esc((idx + 1) + '. ' + label) + '</span>'
         + '<span class="sub">' + esc(m.role) + '</span>';
       if (idx === DATA.targetIdx) el.style.fontWeight = '600';
+      if (hits.length && hits.indexOf(idx) >= 0) el.classList.add('hit');
       return el;
     },
     (m, idx) => { list.select(idx); showDetail(idx); });
@@ -663,11 +744,55 @@ function sessionHtml(data, nonce) {
         showDetail(pendingShow);
         pendingShow = null;
       }
+    } else if (m.type === 'searchResult') {
+      hits = Array.isArray(m.indices) ? m.indices : [];
+      hitPos = 0;
+      $('hits').textContent = hits.length ? '1/' + hits.length + ' 条匹配' : '无匹配';
+      list.render();
+      if (hits.length) jumpTo(hits[0]);
     }
   });
 
-  $('info').textContent = '会话 ' + (DATA.sessionId || '') + ' · ' + skeleton.length + ' 条消息'
-    + (DATA.targetIdx >= 0 ? ' · 已定位 #' + (DATA.targetIdx + 1) : ' · 未找到目标消息');
+  // ── 会话内搜索（命中后滚动定位 + 高亮 + 下方看全文） ──
+  function jumpTo(idx) {
+    if (idx == null || idx < 0) return;
+    $('list').scrollTop = Math.max(0, idx * ROW_H - ($('list').clientHeight || 400) / 2);
+    list.render();
+    list.select(idx);
+    pendingShow = idx;
+    requestRange();
+  }
+  function doSearch() {
+    const q = $('find').value.trim();
+    if (!q) {
+      hits = []; hitPos = 0;
+      $('hits').textContent = baseInfo;
+      list.render();
+      return;
+    }
+    $('hits').textContent = '搜索中…';
+    vscode.postMessage({ type: 'search', query: q });
+  }
+  $('find').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(doSearch, 400);
+  });
+  $('find').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { clearTimeout(searchTimer); doSearch(); }
+    else if (e.key === 'Escape') { $('find').value = ''; doSearch(); }
+  });
+  function step(delta) {
+    if (!hits.length) return;
+    hitPos = (hitPos + delta + hits.length) % hits.length;
+    $('hits').textContent = (hitPos + 1) + '/' + hits.length + ' 条匹配';
+    jumpTo(hits[hitPos]);
+  }
+  $('prev').addEventListener('click', () => step(-1));
+  $('next').addEventListener('click', () => step(1));
+
+  baseInfo = '共 ' + skeleton.length + ' 条'
+    + (DATA.targetIdx >= 0 ? ' · 已定位 #' + (DATA.targetIdx + 1) : '');
+  $('hits').textContent = baseInfo;
 
   // ── 上下分栏拖拽 ──
   let dragging = null;
