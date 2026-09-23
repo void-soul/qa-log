@@ -1,0 +1,9 @@
+QA Log
+Copyright 2026 DEDEDE
+
+This product includes software developed as part of the QA Log project
+(https://github.com/void-soul/qa-log).
+
+Third-party components:
+- marked (https://github.com/markedjs/marked) — MIT License,
+  Copyright (c) 2011-2025, Christopher Jeffrey

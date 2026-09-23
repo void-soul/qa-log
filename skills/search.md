@@ -3,7 +3,7 @@ name: qa-log-search
 description: "搜索 qa.db 中的 QA 条目。当用户需要查找历史问题时使用，支持按ID、关键词、状态、类别筛选。"
 version: 2.0.0
 author: Hermes Agent
-license: MIT
+license: Apache-2.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:

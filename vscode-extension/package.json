@@ -4,7 +4,15 @@
   "description": "在侧边栏浏览项目根目录 qa.db：QA 记录 + CodeBuddy Agent 会话日志",
   "version": "0.1.0",
   "publisher": "qa-log",
-  "license": "MIT",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/void-soul/qa-log.git"
+  },
+  "homepage": "https://github.com/void-soul/qa-log#readme",
+  "bugs": {
+    "url": "https://github.com/void-soul/qa-log/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

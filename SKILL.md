@@ -3,7 +3,7 @@ name: qa-log
 description: "Use when the user asks a programming question or requests a code change. Logs the question and its solution to qa.db (SQLite) in the project root using a structured 4-section format: 现象/需求, 根因, 解决方案, 涉及文件. Supports multi-question decomposition and token-efficient retrieval via scripts."
 version: 3.0.0
 author: Hermes Agent
-license: MIT
+license: Apache-2.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:

@@ -3,7 +3,7 @@ name: qa-log-add-question
 description: "Add a new question entry to qa.db. Use when the user asks a programming question or requests a code change — this is Phase 1 of the qa-log workflow."
 version: 2.0.0
 author: Hermes Agent
-license: MIT
+license: Apache-2.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:

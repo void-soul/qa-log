@@ -3,7 +3,7 @@ name: qa-log-fill-solution
 description: "Fill in the solution for a QA entry (Phase 3). Use after solving a problem to record root cause, solution steps, and modified files in qa.db."
 version: 2.0.0
 author: Hermes Agent
-license: MIT
+license: Apache-2.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:

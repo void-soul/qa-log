@@ -3,7 +3,7 @@ name: qa-log-format-doc
 description: "Validate qa.db entries to ensure consistent structure. Use the qa_tool.py format subcommand to check status values, required fields, and files table format."
 version: 2.0.0
 author: Hermes Agent
-license: MIT
+license: Apache-2.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:

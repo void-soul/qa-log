@@ -3,7 +3,7 @@ name: qa-log-check
 description: "Check and verify a QA entry in qa.db. When user says '请检查Q-XXXX', extract the entry, analyze the solution against the problem, and verify correctness."
 version: 2.0.0
 author: Hermes Agent
-license: MIT
+license: Apache-2.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:

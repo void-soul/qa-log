@@ -3,7 +3,7 @@ name: qa-log-md-sync
 description: "Incrementally merge QA.md into qa.db (and export back). Use when the user updates QA.md and wants it synced into qa.db, or needs to regenerate QA.md from qa.db."
 version: 1.0.0
 author: Hermes Agent
-license: MIT
+license: Apache-2.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:

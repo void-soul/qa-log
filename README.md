@@ -83,3 +83,9 @@ skill 目录/
 ```
 
 核心原则：**每个解决的问题都成为可搜索的参考。**
+
+## 许可证
+
+Apache License 2.0，详见 [LICENSE](LICENSE)；版权与第三方组件声明见 [NOTICE](NOTICE)。
+
+> 注：`vscode-extension/vendor/marked.min.js` 为第三方组件（marked），按其自身 MIT 许可分发。
