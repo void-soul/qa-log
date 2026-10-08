@@ -152,6 +152,34 @@ def main():
                         "--md", md, "--db", dbp, "--strict"], cwd=d, capture_output=True, text=True, encoding="utf-8")
     check("sync --strict 阻断", p.returncode == 3, f"rc={p.returncode} {p.stdout[-120:]}")
 
+    print("== 6. 回归：append 形态 / 命令行 -q / 剪枝上界 ==")
+    uniq = "导出按钮在批量导出超过 500 条时无响应且页面卡死，必须刷新页面才能恢复"
+    conn.execute("INSERT INTO qa_entries (qid, date, category, status, phenomenon)"
+                 " VALUES ('Q-0300','2026-10-09','Bug Fix','Pending',?)", (uniq,))
+    conn.commit()
+    # append 形态：只有 phenomenon（无根因/方案/文件），且 category 不同、无共同文件。
+    # 早期实现按「全部字段权重和 1.0」归一化，得分上限只有 0.5 → 重复检测永不触发。
+    r = G.check({"phenomenon": uniq, "root_cause": "", "solution": "", "files": "",
+                 "category": "Other", "status": "Pending"}, conn=conn)
+    check("append 形态（仅现象+不同类+无文件）仍能判重",
+          r["level"] == "reject" and any(i["code"] == "dup_similarity" for i in r["issues"]),
+          f"level={r['level']} similar={r['similar']}")
+
+    qtext = "命令行传入的现象文本必须能被闸门看到而不是被当成空值误杀"
+    p = run_cli(["--db", dbp, "append", "-c", "Bug Fix", "-q", qtext], cwd=d)
+    check("append -q 可用（不被闸门误杀）", p.returncode == 0 and "Created" in p.stdout,
+          f"rc={p.returncode} out={p.stdout[:120]} err={p.stderr[:160]}")
+    p = run_cli(["--db", dbp, "append", "-c", "Bug Fix", "-q", qtext], cwd=d)
+    check("append -q 重复写入被拒", p.returncode == 3 and "dup" in (p.stderr + p.stdout),
+          f"rc={p.returncode} err={p.stderr[:160]}")
+
+    a = G.field_shingles({"phenomenon": GOOD["question"], "root_cause": GOOD["root_cause"],
+                          "solution": GOOD["solution"], "files": GOOD["files"]})
+    b = G.field_shingles({"phenomenon": uniq, "root_cause": "", "solution": "", "files": ""})
+    check("similarity_bound >= similarity（剪枝无假阴性）",
+          G.similarity_bound(a, b) + 1e-9 >= G.similarity(a, b),
+          f"bound={G.similarity_bound(a, b)} sim={G.similarity(a, b)}")
+
     conn.close()
     shutil.rmtree(d, ignore_errors=True)
 

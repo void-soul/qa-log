@@ -23,10 +23,13 @@ def search_entries(conn, query=None, status=None, category=None, limit=10,
                    include_archived=False, feedback=False):
     """加权召回（返回 dict 列表）。无 query 时退化为最新列表。"""
     if not query:
+        # 归档过滤必须靠「加不加 WHERE」而不是把比较值换成 1：
+        # 写成 archived=1 会变成「只返回已归档」，与 include_archived 语义相反。
+        where = "" if include_archived else " WHERE COALESCE(archived,0)=0"
         rows = conn.execute(
             "SELECT qid, date, category, status, phenomenon FROM qa_entries"
-            " WHERE COALESCE(archived,0)=? ORDER BY qid DESC LIMIT ?",
-            (0 if not include_archived else 1, limit),
+            + where + " ORDER BY qid DESC LIMIT ?",
+            (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
     return MR.recall(conn, query, limit=limit, include_archived=include_archived,

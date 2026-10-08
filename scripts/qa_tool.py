@@ -249,6 +249,19 @@ def cmd_consolidate(args):
             failed += 1
             print(f"  FAILED: {p['a']} ↔ {p['b']}: {msg}")
     print(f"\n[consolidate] 合并 {done} 对，失败 {failed} 对")
+
+    # 模式提炼（设计 7.2）：同构条目组 → category=Pattern 抽象条目 + derived_from 链接
+    if not args.no_pattern and groups:
+        made = 0
+        for g in groups:
+            pqid, msg = MR.create_pattern_entry(conn, g)
+            if pqid:
+                made += 1
+                print(f"  pattern: {msg}")
+            else:
+                print(f"  pattern skipped: {msg}")
+        print(f"\n[consolidate] 生成 Pattern 抽象条目 {made}/{len(groups)} 组"
+              f"（子条目原样保留，未归档未删除）")
     conn.close()
 
 
@@ -440,10 +453,14 @@ def read_json_input(args):
         return None
 
 
-def _guard_fields_from_data(data, category=None, status=None):
-    """把 append/update 的 JSON 输入规整成 guard 用的字段字典。"""
+def _guard_fields_from_data(data, category=None, status=None, question=None):
+    """把 append/update 的输入规整成 guard 用的字段字典。
+
+    question 必须显式传入：命令行 `-q/--question` 的值不在 data 里，漏传会让
+    guard 看到空现象从而误杀 append（命令行参数优先级高于 JSON）。
+    """
     return {
-        "phenomenon": (data.get("phenomenon") or data.get("question") or "").strip(),
+        "phenomenon": (question or data.get("phenomenon") or data.get("question") or "").strip(),
         "root_cause": (data.get("root_cause") or "").strip(),
         "solution": (data.get("solution") or "").strip(),
         "files": (data.get("files") or "").strip(),
@@ -571,6 +588,28 @@ def cmd_split(args):
     conn.close()
     print(f"\n[split] {qid} 已拆分为: {', '.join(created)}")
     print(f"[split] 请分别补齐各子条目的根因/方案（当前为 {PLACEHOLDER}）")
+    print("[split] 子条目全部置为「已验证」后，父条目可聚合升位（届时自动提示，需你授权）")
+
+
+def _parent_aggregation_hint(conn, qid):
+    """子条目全部进入「已验证」时提示父条目可聚合（设计 5.3）。
+
+    只提示不自动改状态——`已验证` 需人类授权（授权铁律第 2 节）。
+    """
+    row = conn.execute(
+        "SELECT parent_qid FROM qa_entries WHERE qid = ?", (qid,)).fetchone()
+    parent = row["parent_qid"] if row else None
+    if not parent:
+        return
+    sibs = conn.execute(
+        "SELECT qid, status FROM qa_entries WHERE parent_qid = ?", (parent,)).fetchall()
+    if not sibs or not all(s["status"] == "已验证" for s in sibs):
+        return
+    prow = conn.execute(
+        "SELECT status FROM qa_entries WHERE qid = ?", (parent,)).fetchone()
+    if prow and prow["status"] != "已验证":
+        print(f"[split] {parent} 的 {len(sibs)} 个子条目均已「已验证」，父条目可聚合置为已验证"
+              f"（需用户授权后执行：qa_tool.py update {parent} -s 已验证）")
 
 
 def cmd_history(args):
@@ -632,7 +671,8 @@ def cmd_append(args):
     category = args.category or data.get("category") or "Other"
     question = (args.question or data.get("question") or "").strip()
 
-    _enforce_guard(_guard_fields_from_data(data, category=category, status="Pending"),
+    _enforce_guard(_guard_fields_from_data(data, category=category, status="Pending",
+                                           question=question),
                    conn, force=getattr(args, "force", False), action="")
 
     conn.execute(
@@ -720,6 +760,8 @@ def cmd_update(args):
     # 状态进入"已验证"是记忆可信度的关键跃迁，单独留痕
     evt = "verify" if (new_status == "已验证" and row["status"] != "已验证") else "update"
     log_event(conn, target, evt, "fields=" + (",".join(changed) if changed else "(无变化)"))
+    if new_status == "已验证":
+        _parent_aggregation_hint(conn, target)
     conn.close()
     print(f"Updated {target}")
 

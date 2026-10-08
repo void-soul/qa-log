@@ -124,17 +124,55 @@ def field_match(needle_norm, field_norm, sig_a, sig_b):
 
 
 def similarity(sig_a, sig_b, norm_a=None, norm_b=None):
-    """字段加权相似度（0~1）。norm_* 可选：提供后短文本也能正确匹配。"""
+    """字段加权相似度（0~1），按「双方都非空的字段」归一化。
+
+    归一化方式必须按参与字段求权重和：append 时只有 phenomenon 有值，若按全部
+    字段权重（合计 1.0）作分母，得分上限只有 phenomenon 的 0.5，永远够不到
+    DUP_SIMILARITY(0.82) —— 重复检测会在「新增记忆」这个主入口上彻底失效。
+    """
     total = 0.0
+    denom = 0.0
     for f, w in FIELD_WEIGHTS.items():
-        s = jaccard(sig_a.get(f, set()), sig_b.get(f, set()))
+        sa, sb = sig_a.get(f, set()), sig_b.get(f, set())
+        if not sa or not sb:
+            continue          # 只有一侧有内容 → 该字段不参与比对
+        denom += w
+        s = jaccard(sa, sb)
         if s == 0.0 and norm_a and norm_b:
             na, nb = norm_a.get(f, ""), norm_b.get(f, "")
             if na and nb and (len(na) <= SHORT_QUERY_MAX or len(nb) <= SHORT_QUERY_MAX):
                 if (len(na) <= SHORT_QUERY_MAX and na in nb) or (len(nb) <= SHORT_QUERY_MAX and nb in na):
                     s = 1.0
         total += w * s
-    return total
+    if denom <= 0.0:
+        return 0.0
+    return total / denom
+
+
+def jaccard_bound(a, b):
+    """Jaccard 上界：min(|A|,|B|) / max(|A|,|B|)（只比集合大小，不求交集）。
+
+    用于免算剪枝：真实 Jaccard 一定 <= 该值，故上界不够阈值时可安全跳过（无假阴性）。
+    """
+    if not a or not b:
+        return 0.0
+    lo, hi = (len(a), len(b)) if len(a) <= len(b) else (len(b), len(a))
+    return float(lo) / hi if hi else 0.0
+
+
+def similarity_bound(sig_a, sig_b):
+    """加权相似度的**上界**：按参与字段加权各自的 jaccard_bound，用于 O(n^2) 扫描剪枝。"""
+    total = 0.0
+    denom = 0.0
+    for f, w in FIELD_WEIGHTS.items():
+        sa, sb = sig_a.get(f, set()), sig_b.get(f, set())
+        if not sa or not sb:
+            continue
+        denom += w
+        total += w * jaccard_bound(sa, sb)
+    if denom <= 0.0:
+        return 0.0
+    return total / denom
 
 
 def _file_tokens(text):
@@ -241,10 +279,16 @@ def scan_split(fields):
 # ── 重复记忆检测 ──────────────────────────────────────────────────────────────
 
 def find_similar(fields, conn, exclude_qid=None, limit=3):
-    """在库中查找与 payload 高度相似的既有条目 → [{qid, score}]。"""
+    """在库中查找与 payload 高度相似的既有条目 → [{qid, score}]。
+
+    不做「同 category / 同文件」的硬跳过——那会让「不同类、又没有文件表」的纯文本
+    重复整条漏检（append 恰恰没有 files）。这两个信号降级为同分时的排序偏好，
+    性能改由 similarity_bound 剪枝保证（无假阴性）。
+    """
     if conn is None:
         return []
     target = field_shingles(fields)
+    target_norms = field_norms(fields)
     tgt_files = _file_tokens(fields.get("files", ""))
     tgt_cat = (fields.get("category") or "").strip()
     try:
@@ -257,17 +301,22 @@ def find_similar(fields, conn, exclude_qid=None, limit=3):
     for r in rows:
         if exclude_qid and r["qid"] == exclude_qid:
             continue
-        same_cat = bool(tgt_cat) and (r["category"] or "") == tgt_cat
-        if not same_cat and not (tgt_files & _file_tokens(r["files"] or "")):
-            continue   # 既不同类也无共同文件，跳过（性能）
-        score = similarity(target, field_shingles({
+        row_fields = {
             "phenomenon": r["phenomenon"], "root_cause": r["root_cause"],
             "solution": r["solution"], "files": r["files"],
-        }))
+        }
+        row_sigs = field_shingles(row_fields)
+        if similarity_bound(target, row_sigs) < DUP_SIMILARITY:
+            continue   # 上界都不够阈值 → 无需真算（无假阴性）
+        score = similarity(target, row_sigs, norm_a=target_norms,
+                           norm_b=field_norms(row_fields))
         if score >= DUP_SIMILARITY:
-            out.append({"qid": r["qid"], "score": round(score, 3)})
-    out.sort(key=lambda x: -x["score"])
-    return out[:limit]
+            same_cat = bool(tgt_cat) and (r["category"] or "") == tgt_cat
+            share_files = bool(tgt_files & _file_tokens(r["files"] or ""))
+            out.append({"qid": r["qid"], "score": round(score, 3),
+                        "prefer": (1 if same_cat else 0) + (1 if share_files else 0)})
+    out.sort(key=lambda x: (-x["score"], -x["prefer"], x["qid"]))
+    return [{"qid": o["qid"], "score": o["score"]} for o in out[:limit]]
 
 
 # ── 主检查 ────────────────────────────────────────────────────────────────────

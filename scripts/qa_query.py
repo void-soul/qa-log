@@ -146,11 +146,21 @@ def act_qa_update(conn, a):
             "status": fields.get("status", row0["status"] or ""),
         }
         result = memory_guard.check(merged, conn=conn, exclude_qid=qid)
-        if result["level"] == "reject" and not data.get("force"):
-            emit(False, error="guard rejected: " + memory_guard.format_report(result, "[guard]"))
-            return
+        if result["level"] == "reject":
+            if not data.get("force"):
+                emit(False, error="guard rejected: " + memory_guard.format_report(result, "[guard]"))
+                return
+            # force 绕过必须与 qa_md_sync 一样留痕，否则审计口径不一致
+            qa_db.log_event(conn, qid, "guard_bypass", ";".join(
+                i["code"] for i in result["issues"] if i["level"] == "reject"), actor="user")
     except ImportError:
         pass  # guard 模块缺失时不阻断插件写入（P1 部署异常兜底）
+    except Exception as e:
+        # 闸门自身异常同样不阻断写入，但要留痕（emit 抛 SystemExit，不会被这里吞掉）
+        try:
+            qa_db.log_event(conn, qid, "guard_bypass", "guard_error: %s" % e, actor="tool")
+        except Exception:
+            pass
 
     sets = ", ".join(f"{k} = ?" for k in fields)
     params = list(fields.values()) + [qid]
@@ -293,7 +303,8 @@ def act_recall(conn, a):
     """加权召回（P3）。--limit / --status / --category / --include-archived / --no-feedback"""
     import memory_recall as MR
 
-    q = (a.query or "").strip()
+    # dest 不能与 --query 同名（否则两个 action 争抢同一属性）；位置参数独立命名
+    q = (getattr(a, "recall_query", "") or a.query or "").strip()
     if not q:
         emit(False, error="recall needs a query")
         return
@@ -336,7 +347,7 @@ def main():
     p.add_argument("--project")
     p.add_argument("--session")
     p.add_argument("--event")
-    p.add_argument("query", nargs="?", default="", help="recall query text")
+    p.add_argument("recall_query", nargs="?", default="", help="recall query text")
     p.add_argument("--include-archived", action="store_true")
     p.add_argument("--no-feedback", action="store_true")
     a = p.parse_args()
