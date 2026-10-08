@@ -49,7 +49,8 @@ function isOurHook(cfg, event) {
 function hookEntry() {
   const script = hookScriptPath().replace(/\\/g, '/');
   return [{
-    hooks: [{ type: 'command', command: `python "${script}"`, timeout: 30 }],
+    // 用配置的 Python 而不是写死 `python`：只装了 `py -3` 的机器上，写死会让 hook 静默失效
+    hooks: [{ type: 'command', command: `${pythonCmdForHook()} "${script}"`, timeout: 30 }],
   }];
 }
 
@@ -141,12 +142,13 @@ function scriptPath() {
     return explicit;
   }
   const home = os.homedir();
+  // 不要在这里写死本机绝对路径（会让别人的机器探测到一个不存在的盘符路径）；
+  // 找不到时用下面的 qaLog.scriptPath 设置项指定。
   const candidates = [
     path.join(home, '.claude', 'skills', 'qa-log', 'scripts', 'qa_query.py'),
     path.join(home, '.agents', 'skills', 'qa-log', 'scripts', 'qa_query.py'),
     path.join(home, '.codebuddy', 'skills', 'qa-log', 'scripts', 'qa_query.py'),
     path.join(workspaceRoot(), 'scripts', 'qa_query.py'),
-    'e:/pro/skill/qa-log/scripts/qa_query.py',
   ];
   for (const c of candidates) {
     if (fs.existsSync(c)) {
@@ -156,9 +158,28 @@ function scriptPath() {
   return candidates[0];
 }
 
-function query(action, extra = [], dbOverride = null) {
+/** Python 可执行文件：`qaLog.pythonPath`，留空则用 PATH 里的 `python`。 */
+function pythonCommand() {
   const cfg = vscode.workspace.getConfiguration('qaLog');
-  const py = (cfg.get('pythonPath') || 'python').trim() || 'python';
+  return (cfg.get('pythonPath') || 'python').trim() || 'python';
+}
+
+/** 拆成 [cmd, ...前置参数]：允许配置成 `py -3` 这类带参数的写法；配置成完整路径则原样。 */
+function pythonArgv(py = pythonCommand()) {
+  if (fs.existsSync(py)) return [py];
+  const parts = String(py).split(/\s+/).filter(Boolean);
+  return parts.length ? parts : ['python'];
+}
+
+/** 写进 settings.json 的 hook 命令串：路径加引号，`py -3` 这类带参数的保持原样。 */
+function pythonCmdForHook() {
+  const py = pythonCommand();
+  return fs.existsSync(py) ? `"${py}"` : py;
+}
+
+function query(action, extra = [], dbOverride = null) {
+  const py = pythonCommand();
+  const [pyCmd, ...pyPre] = pythonArgv(py);
   const script = scriptPath();
   const db = dbOverride || dbPath();
 
@@ -175,14 +196,16 @@ function query(action, extra = [], dbOverride = null) {
 
   const args = [script, '--db', db, action, ...extra];
   return new Promise((resolve, reject) => {
+    let triedFallback = false;
     const run = (cmd, argv) => {
       const t0 = Date.now();
       execFile(cmd, argv, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, windowsHide: true },
         (err, stdout, stderr) => {
-          if (err && err.code === 'ENOENT' && cmd === py) {
+          if (err && err.code === 'ENOENT' && !triedFallback) {
             // python 不在 PATH 时回退 py -3（Windows 官方安装器）
+            triedFallback = true;
             diag(`ENOENT: '${cmd}' 不可用，回退 'py -3'`);
-            run('py', ['-3', ...argv]);
+            run('py', ['-3', ...args]);
             return;
           }
           if (err && !stdout) {
@@ -215,7 +238,7 @@ function query(action, extra = [], dbOverride = null) {
           resolve(parsed.data);
         });
     };
-    run(py, args);
+    run(pyCmd, [...pyPre, ...args]);
   });
 }
 
@@ -448,22 +471,30 @@ let qaDetailState = null;   // {entry}
 let refreshViews = () => {}; // activate 时注入（重渲染两个侧边栏视图）
 
 function qaWrite(action, args, inputObj) {
-  const cfg = vscode.workspace.getConfiguration('qaLog');
-  const py = (cfg.get('pythonPath') || 'python').trim() || 'python';
+  const [pyCmd, ...pyPre] = pythonArgv();
   const argv = [scriptPath(), '--db', dbPath(), action, ...args];
-  const run = (cmd) => execFileSync(cmd, argv, {
+  const run = (cmd, argv2) => execFileSync(cmd, argv2, {
     input: JSON.stringify(inputObj || {}), encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024, windowsHide: true,
   });
   let stdout;
   try {
-    stdout = run(py);
+    stdout = run(pyCmd, [...pyPre, ...argv]);
   } catch (e) {
-    if (e && e.code === 'ENOENT' && py === 'python') stdout = run('py');
-    else {
-      const so = String((e && e.stdout) || '');
-      if (so.trim()) stdout = so;
-      else throw new Error(String((e && e.message) || e));
+    const so = String((e && e.stdout) || '');
+    if (e && e.code === 'ENOENT') {
+      // python 不在 PATH 时回退 py -3（Windows 官方安装器）
+      try {
+        stdout = run('py', ['-3', ...argv]);
+      } catch (e2) {
+        const so2 = String((e2 && e2.stdout) || '');
+        if (so2.trim()) stdout = so2;
+        else throw new Error(String((e2 && e2.message) || e2));
+      }
+    } else if (so.trim()) {
+      stdout = so;
+    } else {
+      throw new Error(String((e && e.message) || e));
     }
   }
   const line = String(stdout || '').trim().split(/\r?\n/).filter(Boolean).pop();
@@ -735,10 +766,8 @@ function activate(context) {
       healthProvider.render();
     }),
     vscode.commands.registerCommand('qaLog.openHealthReport', () => {
-      const cfg = vscode.workspace.getConfiguration('qaLog');
-      const py = (cfg.get('pythonPath') || 'python').trim() || 'python';
       const term = vscode.window.createTerminal({ name: 'QA 健康报告' });
-      term.sendText(`"${py}" "${scriptPath()}" --db "${dbPath()}" health`);
+      term.sendText(`${pythonCmdForHook()} "${scriptPath()}" --db "${dbPath()}" health`);
       term.show(true);
     }),
     vscode.commands.registerCommand('qaLog.openDb', async () => {

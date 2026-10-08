@@ -860,6 +860,20 @@ function sessionHtml(data, nonce) {
 
 // ── 侧边栏：记忆健康（P4） ────────────────────────────────────────────────────
 
+/**
+ * 健康面板统计卡（P4）。纯函数、自带转义，拆出来是为了能在 node 里直接单测
+ * （之前写死在 webview 脚本字符串里，DOM 层级错了一行也没法被测到）。
+ * webview 侧通过 `card = ${statCardHtml.toString()}` 注入，保持单一实现。
+ */
+function statCardHtml(label, val, cls) {
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // .num 必须是 .stat 的子节点：CSS 用 `.stat .num` 控制大号数字，
+  // 且 .stats 是 3 列网格，拆成兄弟节点会让标签与数字各占一格。
+  return '<div class="stat ' + (cls || '') + '">' + esc(label)
+    + '<div class="num">' + esc(val) + '</div></div>';
+}
+
 function healthHtml(data, nonce) {
   const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
   const body = `
@@ -872,11 +886,7 @@ function healthHtml(data, nonce) {
   </div>`;
   const script = `
   const DATA = ${jsonScript(data)};
-
-  function card(label, val, cls) {
-    return '<div class="stat ' + (cls || '') + '">' + esc(label)
-      + '</div><div class="num">' + esc(val) + '</div></div>';
-  }
+  const card = ${statCardHtml.toString()};
 
   function render() {
     const root = $('list');
@@ -897,6 +907,7 @@ function healthHtml(data, nonce) {
     html += card('待验证积压', staleN, staleN ? 'warn' : '');
     html += card('孤立条目', (d.orphans || []).length);
     html += card('7天新增', d.added_7d != null ? d.added_7d : 0);
+    html += card('7天召回', d.recalled_7d != null ? d.recalled_7d : 0);
     html += '</div>';
 
     if (stKeys.length) {
@@ -950,4 +961,6 @@ function healthHtml(data, nonce) {
   return page(nonce, csp, body, script);
 }
 
-module.exports = { qaListHtml, qaDetailHtml, logListHtml, logDetailHtml, sessionHtml, healthHtml };
+module.exports = {
+  qaListHtml, qaDetailHtml, logListHtml, logDetailHtml, sessionHtml, healthHtml, statCardHtml,
+};
