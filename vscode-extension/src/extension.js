@@ -164,17 +164,26 @@ function pythonCommand() {
   return (cfg.get('pythonPath') || 'python').trim() || 'python';
 }
 
-/** 拆成 [cmd, ...前置参数]：允许配置成 `py -3` 这类带参数的写法；配置成完整路径则原样。 */
+/**
+ * 配置值是不是「路径」：**含路径分隔符才算**。
+ * 不能只用 fs.existsSync 判断——工作区里若恰好有个叫 `python` 的文件，
+ * 裸命令会被误判成路径（`extension.js` 的 cwd 正是工作区根）。
+ */
+function isPythonPath(py) {
+  return /[\\/]/.test(String(py || ''));
+}
+
+/** 拆成 [cmd, ...前置参数]：允许配置成 `py -3` 这类带参数的写法；配置成路径则整体作为一个 cmd。 */
 function pythonArgv(py = pythonCommand()) {
-  if (fs.existsSync(py)) return [py];
+  if (isPythonPath(py)) return [py];
   const parts = String(py).split(/\s+/).filter(Boolean);
   return parts.length ? parts : ['python'];
 }
 
-/** 写进 settings.json 的 hook 命令串：路径加引号，`py -3` 这类带参数的保持原样。 */
+/** 写进 settings.json / 终端的命令行串：路径加引号（可能含空格），`py -3` 这类带参数的保持原样。 */
 function pythonCmdForHook() {
   const py = pythonCommand();
-  return fs.existsSync(py) ? `"${py}"` : py;
+  return isPythonPath(py) ? `"${py}"` : py;
 }
 
 function query(action, extra = [], dbOverride = null) {
@@ -838,4 +847,6 @@ function deactivate() { }
 
 module.exports = {
   activate, deactivate, installHooks, removeHooks, hooksInstalled,
+  // 导出以便 node 侧单测（Python 定位是「命令 or 路径 or 带参数」三态，很容易改坏）
+  isPythonPath, pythonArgv, pythonCmdForHook, pythonCommand,
 };
