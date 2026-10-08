@@ -115,6 +115,26 @@ def main():
     check("模式候选组", any("Q-0101" in g["qids"] for g in groups),
           [(g["category"], g["size"]) for g in groups])
 
+    print("== 6b. Pattern 抽象条目落库（设计 7.2）==")
+    if groups:
+        def _counts():
+            return (conn.execute("SELECT COUNT(*) FROM qa_entries WHERE parent_qid IS NOT NULL").fetchone()[0],
+                    conn.execute("SELECT COUNT(*) FROM qa_entries WHERE COALESCE(archived,0)=1").fetchone()[0])
+        kids_before, arch_before = _counts()
+        pqid, msg = MR.create_pattern_entry(conn, groups[0])
+        check("Pattern 抽象条目创建成功", pqid is not None, msg)
+        if pqid:
+            row = conn.execute("SELECT category, status FROM qa_entries WHERE qid=?", (pqid,)).fetchone()
+            check("Pattern 条目 category=Pattern", row is not None and row["category"] == "Pattern",
+                  str(dict(row) if row else None))
+            n_links = conn.execute(
+                "SELECT COUNT(*) FROM qa_links WHERE from_qid=? AND kind='derived_from'", (pqid,)).fetchone()[0]
+            check("Pattern 以 derived_from 链接子项", n_links >= 5, str(n_links))
+            kids_after, arch_after = _counts()
+            check("子条目未被改动/归档（只新增抽象条目）",
+                  (kids_after, arch_after) == (kids_before, arch_before),
+                  f"{(kids_before, arch_before)} -> {(kids_after, arch_after)}")
+
     print("== 7. CLI recall / search_qa ==")
     p = run_cli(["--db", dbp, "recall", "预览 黑屏", "-n", "3"], cwd=d)
     check("recall CLI 输出分数+反馈提示", "已回写召回反馈" in p.stdout and "score=" in p.stdout, p.stdout[:150])
@@ -123,6 +143,20 @@ def main():
     p = subprocess.run([sys.executable, os.path.join(SCRIPTS, "search_qa.py"), "预览",
                         "--db", dbp, "--no-feedback"], capture_output=True, text=True, encoding="utf-8")
     check("search_qa.py 可用", p.returncode == 0 and "Found" in p.stdout, p.stdout[:120])
+
+    import search_qa
+    conn.execute("UPDATE qa_entries SET archived=1 WHERE qid='Q-0102'")
+    conn.commit()
+    both = search_qa.search_entries(conn, None, limit=100, include_archived=True)
+    only = search_qa.search_entries(conn, None, limit=100, include_archived=False)
+    qids_both = {r["qid"] for r in both}
+    qids_only = {r["qid"] for r in only}
+    check("search_qa --include-archived 应包含归档条目",
+          "Q-0102" in qids_both, sorted(qids_both)[:8])
+    check("search_qa 默认应排除归档条目",
+          "Q-0102" not in qids_only and qids_only, sorted(qids_only)[:8])
+    conn.execute("UPDATE qa_entries SET archived=0 WHERE qid='Q-0102'")
+    conn.commit()
 
     print("== 8. 真实库副本回归 ==")
     real = os.path.join(ROOT, "qa.db")

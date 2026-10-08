@@ -83,6 +83,9 @@ def find_conflicts(conn, phen_sim=CONFLICT_PHEN_SIM, cause_sim=CONFLICT_CAUSE_SI
     out = []
     for i in range(len(rows)):
         for j in range(i + 1, len(rows)):
+            # 剪枝：现象上界不够阈值则不可能构成冲突（无假阴性）
+            if G.jaccard_bound(sigs[i]["phenomenon"], sigs[j]["phenomenon"]) < phen_sim:
+                continue
             ps = G.jaccard(sigs[i]["phenomenon"], sigs[j]["phenomenon"])
             if ps < phen_sim:
                 continue

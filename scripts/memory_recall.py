@@ -103,10 +103,6 @@ def recall(conn, query, limit=DEFAULT_LIMIT, include_archived=False,
         }
         row_sig = G.field_shingles(rowfields)
         row_norm = G.field_norms(rowfields)
-        _legacy = G.field_shingles({
-            "phenomenon": r["phenomenon"], "root_cause": r["root_cause"],
-            "solution": r["solution"], "files": r["files"],
-        })
         if not any(row_sig[f] for f in W_FIELD):
             continue
         s, detail = score(sig_q, norm_q, row_sig, row_norm, r["importance"], r["access_count"],
@@ -168,6 +164,9 @@ def find_near_duplicates(conn, threshold=DUP_THRESHOLD):
         ra, sa = items[i]
         for j in range(i + 1, len(items)):
             rb, sb = items[j]
+            # 剪枝：上界 < 阈值 → 不可能命中，跳过真算（无假阴性）
+            if G.similarity_bound(sa, sb) < threshold:
+                continue
             s = G.similarity(sa, sb)
             if s < threshold:
                 continue
@@ -216,6 +215,61 @@ def suggest_patterns(conn, min_size=PATTERN_MIN_SIZE, min_sim=PATTERN_MIN_SIM):
             })
     out.sort(key=lambda x: -x["size"])
     return out
+
+
+PATTERN_PLACEHOLDER = "[待填写]"
+PATTERN_MAX_CHILDREN = 20
+
+
+def create_pattern_entry(conn, group, actor="tool"):
+    """把一组同构条目提炼成一条 `category=Pattern` 的抽象条目（设计 7.2）。
+
+    只**新增**抽象条目并以 `derived_from` 链接子项，绝不改动/归档/删除子条目
+    （子条目的合并留给 consolidate 的 merge 建议，需人确认）。
+    抽象条目同样过写入闸门；返回 (qid, msg)，被拒则返回 (None, reason)。
+    """
+    from db import add_link, get_next_qid, log_event
+
+    qids = (group.get("qids") or [])[:PATTERN_MAX_CHILDREN]
+    if not qids:
+        return None, "empty group"
+    mods = "/".join(group.get("modules") or []) or "(no-module)"
+    cat = group.get("category") or "Other"
+    phen = ("模式提炼：%s / %s ——由 %d 条同类具体记忆归纳（子条目见下）\n\n%s"
+            % (cat, mods, group.get("size") or len(qids),
+               "\n".join("- " + q for q in qids)))
+
+    files_rows, seen = [], set()
+    for q in qids:
+        row = conn.execute("SELECT files FROM qa_entries WHERE qid = ?", (q,)).fetchone()
+        for f, c in G.files_rows((row["files"] if row else "") or ""):
+            if f in seen:
+                continue
+            seen.add(f)
+            files_rows.append((f, c))
+    files = ("| File | Change |\n|------|--------|\n"
+             + "\n".join("| %s | %s |" % (f, c) for f, c in files_rows)) if files_rows else ""
+
+    fields = {"phenomenon": phen, "root_cause": PATTERN_PLACEHOLDER,
+              "solution": PATTERN_PLACEHOLDER, "files": files,
+              "category": "Pattern", "status": "Pending"}
+    res = G.check(fields, conn=conn)
+    if res["level"] == "reject":
+        codes = ",".join(i["code"] for i in res["issues"] if i["level"] == "reject")
+        return None, "guard rejected (%s)" % codes
+
+    qid = get_next_qid(conn)
+    conn.execute(
+        "INSERT INTO qa_entries (qid, date, category, status, phenomenon, root_cause,"
+        " solution, files, importance) VALUES (?, date('now','localtime'), 'Pattern',"
+        " 'Pending', ?, ?, ?, ?, 60)",
+        (qid, phen, PATTERN_PLACEHOLDER, PATTERN_PLACEHOLDER, files),
+    )
+    conn.commit()
+    for q in qids:
+        add_link(conn, qid, q, "derived_from", "pattern abstracted from %s" % q)
+    log_event(conn, qid, "pattern", "children=%d modules=%s" % (len(qids), mods), actor=actor)
+    return qid, "pattern %s <- %d children" % (qid, len(qids))
 
 
 def merge_entries(conn, keep, drop, actor="agent"):
