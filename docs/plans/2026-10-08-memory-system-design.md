@@ -4,6 +4,8 @@
 - 状态：**P1 / P2 已实现**（2026-10-08），P3 / P4 待做
   - P1：写入闸门 + 拆分 → `scripts/memory_guard.py`、`qa_tool.py guard/split`、`tests/test_memory_guard.py`（19 项通过）
   - P2：schema 扩展 + 审计流水 + 关系表 → `scripts/db.py`（`MEMORY_COLUMNS` / `qa_links` / `qa_events` / `log_event` / `add_link`）、`qa_tool.py history`、`tests/test_memory_p2.py`（17 项通过）
+  - P4：衰减归档 + 冲突检测 + 健康报告 -> `scripts/memory_health.py`（decay_score/suggest_archive/find_conflicts/health_report）、`qa_tool.py health/prune/conflicts`、`tests/test_memory_p4.py`（21 项通过）；needs_review 列随 P4 落地；冲突阈值经实测定为 0.35（同问题中文短文本0.39~0.67，不同问题~0.0）
+  - 待做：插件「记忆健康」第三视图（CLI 已就绪，`health --json` 可直接驱动）
   - 偏离说明：P1 提前引入了 `parent_qid` 列（原计划在 P2），使拆分关系可追溯；`recall` 事件留待 P3
 - 决策点：按第 9 节默认值执行（1A 零依赖检索 / 2A 提示式拆分 / 3A 先做 P1 / 会话上限 3 条）
 - 适用仓库：`qa-log`（skill 本体 + `vscode-extension` + `tauri-app`）
@@ -244,6 +246,6 @@ score = w1·field_match(标题/现象 权重 3 / 根因 2 / 方案 1 / 文件 2)
 | P1 | `memory_guard.py`、`guard/split` CLI、写入收口、规则增补、hook 降噪 | 无 schema 变更 | ~1 天 | ✅ 已实现 |
 | P2 | schema 扩展、`qa_links`、`qa_events`、`history` 命令 | 幂等迁移 | ~0.5 天 | ✅ 已实现 |
 | P3 | 加权召回 + 召回反馈、`consolidate`、模式提炼 | 检索体验 | ~1–2 天 | ✅ 已实现 |
-| P4 | 衰减归档、冲突检测、插件「记忆健康」视图 | 插件 + CLI | ~1–2 天 | ⬜ 待做 |
+| P4 | 衰减归档、冲突检测、健康报告 | CLI | ~0.5 天 | ✅ 已实现 |
 
 每个阶段独立可验收，完成后更新本文件并在 `qa.db` 记一条 QA 条目。

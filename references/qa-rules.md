@@ -161,3 +161,10 @@ python <skill-path>/scripts/qa_tool.py split Q-0012 --apply    # 确认后建子
 - 归档条目默认不参与召回，`--include-archived` 才可见（**永不删除**）
 - **巩固**：`qa_tool.py consolidate` 默认只出建议（近似条目对 + Pattern 候选组）；`--apply` 才执行，且**只归档不删除**（被并入方 `archived=1` + `supersedes` 关系 + `merge` 事件）
 - 短查询（≤4 字符）走"包含"判断，长查询走 3-gram 相似度——两者都零依赖
+
+### 5.7 遗忘与冲突（P4）
+
+- **衰减归档**：qa_tool.py prune 只给建议（终态 WontFix/Unresolved 且几乎未被召回，或已解决待验证挂起超 180 天且冷）；--apply 才归档，--restore 可恢复。**只置 archived=1，永不删除**，归档条目默认不参与召回（recall --include-archived 可见）
+- **冲突检测**：qa_tool.py conflicts 检出「现象相似但根因/方案分歧」的条目（阈值 0.35，实测同问题中文短文本 0.39~0.67、不同问题约 0.0）；--link 才写 contradicts 关系并把双方标记 needs_review
+- **健康报告**：qa_tool.py health（--json 供扩展面板消费）汇总状态分布/待验证积压/孤立条目/近似重复对/冲突/近 7 天趋势
+- 这三个动作**默认全是 dry-run**，落库前需用户确认；归档与合并都可逆

@@ -134,7 +134,9 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 | `split <ID>` | `--apply`, `--yes` | 拆分"一条多诉求"的条目：默认只打印草案，`--apply` 建子条目（写 `parent_qid` + `derived_from` 关系） |
 | `history <ID>` | — | 打印该条记忆的**审计流水**（`qa_events`：append/update/verify/split/delete…）与关系（`qa_links`）；条目已删除也能查到 |
 | `recall "<查询词>"` | `--qid`, `-n`, `-s`, `-c`, `--include-archived`, `--no-feedback` | **加权召回**（字段权重+重要性+召回次数+新鲜度+关系）；命中回写召回反馈。`--qid` 用于"找相似记忆" |
-| `consolidate` | `--apply`, `--yes`, `--threshold`, `--min-size`, `--no-pattern` | **巩固**：近似条目去重/合并 + Pattern 模式提炼建议（默认 dry-run，`--apply` 才归档合并，永不删除） |
+| `consolidate` | `--apply`, `--yes`, `--threshold`, `--min-size`, `--no-pattern` | **巩固**：近似条目去重/合并 + Pattern 模式提炼建议（默认 dry-run，`--apply` 才归档合并，永不删除） || `health` | `--json` | **记忆健康报告**（P4）：状态分布/积压/孤立/重复/冲突/趋势；`--json` 供扩展面板消费 |
+| `prune` | `--apply`, `--yes`, `--restore`, `--stale-days`, `--cold-access` | **衰减归档**（P4）：默认只给建议；`--apply` 才归档（仅置 archived=1，永不删除），`--restore` 可恢复 |
+| `conflicts` | `--link` | **冲突检测**（P4）：现象相似但根因/方案分歧；`--link` 记录 contradicts 关系并标记 needs_review |
 | `next-id` | — | 打印下一个可用 ID |
 | `delete <ID>` | `-f/--force`, `--dry-run` | 删除单条（默认有确认提示）。`--force` 跳过确认；`--dry-run` 只显示不删 |
 | `format` | — | 校验并报告 qa.db 条目结构问题 |

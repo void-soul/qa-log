@@ -279,6 +279,35 @@ def act_stats(conn, a):
     emit(True, {"qa_total": qa, "qa_by_status": st, "log_total": logs, "log_sessions": sessions})
 
 
+def act_health(conn, a):
+    """记忆健康报告（P4），供扩展「记忆健康」视图消费。"""
+    try:
+        import memory_health as MH
+    except ImportError:
+        emit(False, error="memory_health module not available")
+        return
+    emit(True, MH.health_report(conn))
+
+
+def act_recall(conn, a):
+    """加权召回（P3）。--limit / --status / --category / --include-archived / --no-feedback"""
+    import memory_recall as MR
+
+    q = (a.query or "").strip()
+    if not q:
+        emit(False, error="recall needs a query")
+        return
+    try:
+        hits = MR.recall(conn, q, limit=a.limit or 10,
+                         include_archived=bool(a.include_archived),
+                         feedback=not bool(a.no_feedback),
+                         status=a.status, category=a.category)
+    except Exception as e:
+        emit(False, error=f"recall failed: {e}")
+        return
+    emit(True, {"hits": hits})
+
+
 ACTIONS = {
     "qa-list": act_qa_list,
     "qa-get": act_qa_get,
@@ -288,6 +317,8 @@ ACTIONS = {
     "log-sessions": act_log_sessions,
     "projects": act_projects,
     "stats": act_stats,
+    "health": act_health,
+    "recall": act_recall,
 }
 
 
@@ -305,6 +336,9 @@ def main():
     p.add_argument("--project")
     p.add_argument("--session")
     p.add_argument("--event")
+    p.add_argument("query", nargs="?", default="", help="recall query text")
+    p.add_argument("--include-archived", action="store_true")
+    p.add_argument("--no-feedback", action="store_true")
     a = p.parse_args()
 
     try:

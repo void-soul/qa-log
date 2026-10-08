@@ -252,6 +252,99 @@ def cmd_consolidate(args):
     conn.close()
 
 
+def cmd_health(args):
+    """记忆健康报告（P4）。"""
+    import json as _json
+    import memory_health as MH
+    conn = connect(args.db)
+    r = MH.health_report(conn)
+    if args.json:
+        print(_json.dumps(r, ensure_ascii=False, indent=2))
+        conn.close()
+        return
+    print("[health] total={} archived={} needs_review={}".format(
+        r.get("total"), r.get("archived"), r.get("needs_review")))
+    st = ", ".join('{}={}'.format(k, v) for k, v in (r.get("by_status") or {}).items())
+    print("  by_status: {}".format(st or '(empty)'))
+    print("  last7d: added={} recalled={}".format(r.get("added_7d"), r.get("recalled_7d")))
+    for key, label in (('stale_pending', 'stale-pending'),
+                      ('orphans', 'orphans'),
+                      ('conflicts', 'conflicts')):
+        items = r.get(key) or []
+        print("  {}: {}".format(label, len(items)))
+        for it in items[:5]:
+            if isinstance(it, dict):
+                print("    {} vs {}  {}".format(it.get("a"), it.get("b"), it.get("reason") or it.get("score")))
+            else:
+                print("    {}".format(it))
+    dups = r.get('duplicate_pairs') or []
+    print("  duplicate_pairs: {}".format(len(dups)))
+    for d in dups[:5]:
+        print("    {} vs {}  score={} (keep {})".format(d.get("a"), d.get("b"), d.get("score"), d.get("keep_hint")))
+    conn.close()
+
+def cmd_prune(args):
+    """衰减归档（P4）：默认只给建议，--apply 才归档（永不删除）。"""
+    import memory_health as MH
+    conn = connect(args.db)
+    if args.restore:
+        qid = normalize_id(args.restore)
+        MH.unarchive_entry(conn, qid)
+        print("[prune] restored " + qid)
+        conn.close()
+        return
+    sugg = MH.suggest_archive(conn, stale_days=args.stale_days, cold_access=args.cold_access)
+    print("[prune] {} suggestion(s): terminal-or-stale AND cold".format(len(sugg)))
+    for s in sugg[:20]:
+        print("  {}  decay={:.3f}  {}  {}".format(s["qid"], s["score"], s["status"], s["reason"]))
+        print("    " + (s.get("title") or ''))
+    if not args.apply:
+        print('')
+        print("[dry-run] nothing changed. Use --apply to archive (reversible via --restore ID).")
+        conn.close()
+        return
+    if not sugg:
+        print("[prune] nothing to archive")
+        conn.close()
+        return
+    if not args.yes:
+        try:
+            ans = input(chr(10) + "Archive {} entries? (archived=1 only, never deletes) [y/N] ".format(len(sugg))).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print(chr(10) + "Aborted", file=sys.stderr)
+            conn.close()
+            sys.exit(130)
+        if ans not in ('y', 'yes'):
+            print("Aborted")
+            conn.close()
+            return
+    for s in sugg:
+        MH.archive_entry(conn, s["qid"], s["reason"])
+        print("  archived: {}".format(s["qid"]))
+    print(chr(10) + "[prune] archived {} (recall excludes them; --include-archived to see)".format(len(sugg)))
+    conn.close()
+
+
+def cmd_conflicts(args):
+    """冲突检测（P4）：现象相似但根因/方案分歧。"""
+    import memory_health as MH
+    conn = connect(args.db)
+    cs = MH.find_conflicts(conn)
+    print("[conflicts] {} potential conflict(s)".format(len(cs)))
+    for c in cs[:20]:
+        print("  {} vs {}  {}".format(c["a"], c["b"], c["reason"]))
+    if not cs:
+        conn.close()
+        return
+    if not args.link:
+        print('')
+        print("[dry-run] nothing written. Use --link to record contradicts and set needs_review.")
+        conn.close()
+        return
+    n = MH.mark_conflicts(conn, cs)
+    print(chr(10) + "[conflicts] recorded {} contradicts link(s); both sides need review".format(n))
+    conn.close()
+
 def cmd_summary(args):
     """List all entries: ID + title only."""
     conn = connect(args.db)
@@ -798,6 +891,19 @@ def main():
     p_consol.add_argument("--min-size", type=int, default=5, help="模式提炼的最小条目数（默认 5）")
     p_consol.add_argument("--no-pattern", action="store_true", help="跳过模式提炼检测")
 
+    p_health = sub.add_parser("health", help="Memory health report (P4)")
+    p_health.add_argument("--json", action="store_true", help="Output raw JSON (for the extension panel)")
+
+    p_prune = sub.add_parser("prune", help="Decay-based archive suggestions (P4, default dry-run)")
+    p_prune.add_argument("--apply", action="store_true", help="Actually archive (archived=1, never deletes)")
+    p_prune.add_argument("--yes", action="store_true", help="Skip confirmation")
+    p_prune.add_argument("--restore", help="Un-archive one entry by ID")
+    p_prune.add_argument("--stale-days", type=int, default=180, help="Stale threshold for 已解决待验证 (default 180)")
+    p_prune.add_argument("--cold-access", type=int, default=2, help="Max access_count to be considered cold (default 2)")
+
+    p_conf = sub.add_parser("conflicts", help="Detect contradictory entries (P4, default dry-run)")
+    p_conf.add_argument("--link", action="store_true", help="Record contradicts links + set needs_review")
+
     args = parser.parse_args()
 
     commands = {
@@ -809,6 +915,9 @@ def main():
         "next-id": cmd_next_id,
         "delete": cmd_delete,
         "format": cmd_format,
+        "health": cmd_health,
+        "prune": cmd_prune,
+        "conflicts": cmd_conflicts,
         "recall": cmd_recall,
         "consolidate": cmd_consolidate,
         "guard": cmd_guard,
