@@ -8,6 +8,11 @@
   - 待做：插件「记忆健康」第三视图（CLI 已就绪，`health --json` 可直接驱动）
   - 偏离说明：P1 提前引入了 `parent_qid` 列（原计划在 P2），使拆分关系可追溯；`recall` 事件留待 P3
 - 决策点：按第 9 节默认值执行（1A 零依赖检索 / 2A 提示式拆分 / 3A 先做 P1 / 会话上限 3 条）
+- **审查修正（2026-10-09，代码审查后回改）**：
+  - ① 相似度改为按「双方都非空的字段权重之和」归一化。旧实现恒除以权重总和 1.0，而 `append` 只有 `phenomenon` 有值 → 得分上限 0.5，永远够不到 `DUP_SIMILARITY=0.82`，**重复检测在「新增记忆」这个主入口上永不触发**（真实库实测已复现并修复）
+  - ② 去掉「同 category / 同文件」的硬跳过（会让「不同类 + 无文件表」的纯文本重复漏检）；性能改由 `similarity_bound`（Jaccard 上界，无假阴性）剪枝保证：549 条真实库 `find_near_duplicates` 2.67s→0.76s、`health_report` 3.10s→1.11s
+  - ③ `append -q/--question` 未传入闸门导致命令行路径被误杀；④ 插件统计卡 `.num` 写成 `.stat` 兄弟节点（3 列网格下标签与数字各占一格）
+  - ⑤ 补齐：父条目 status 聚合提示、插件 `force` 的 `guard_bypass` 留痕、`Pattern` 抽象条目落地、`search_qa --include-archived` 语义反转
 - 适用仓库：`qa-log`（skill 本体 + `vscode-extension` + `tauri-app`）
 
 ## 1. 背景与目标
@@ -75,11 +80,19 @@ QA Log 目前已经具备**记忆系统的骨架**：情景记忆（`agent_log`�
 新建 `scripts/memory_guard.py`，对外两个函数：
 
 ```python
-def check_entry(payload, conn=None, mode="write") -> GuardResult
-# GuardResult: {level: "ok"|"warn"|"reject", issues: [...], split_plan: [...], similar: [qid, ...]}
+# 实现签名（2026-10-09 与代码同步，早期草案的 check_entry/mode 已弃用）
+def check(fields, conn=None, exclude_qid=None) -> dict
+# 返回: {level: "ok"|"warn"|"reject", issues: [{code, level, field, message}],
+#        similar: [{qid, score}], split: {strategy, reasons, drafts}}
 
-def scan_split(payload) -> list[dict]   # 拆分草案（不落库）
+def scan_split(fields) -> dict          # 拆分草案（不落库）：{strategy, reasons, drafts}
+def similarity(sig_a, sig_b, norm_a=None, norm_b=None) -> float
+def similarity_bound(sig_a, sig_b) -> float   # 上界，用于 O(n^2) 扫描剪枝（无假阴性）
 ```
+
+> **归一化口径（关键）**：`similarity` 按「双方都非空的字段权重之和」归一化，而不是恒除以权重总和 1.0。
+> 否则 `append`（只有 `phenomenon` 有值）的得分上限只有 0.5，永远够不到 0.82 阈值，
+> 重复检测会在新增入口上彻底失效。
 
 调用点（**四条通道缺一不可**，否则规则形同虚设）：
 

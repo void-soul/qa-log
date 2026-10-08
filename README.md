@@ -46,7 +46,8 @@ python <skill-path>/scripts/qa_tool.py append \
 
 | 组件 | 技术 | 说明 |
 |------|------|------|
-| CLI | Python 3.11 + sqlite3 | 数据存储与命令行 |
+| CLI | Python **3.7+**（建议 3.9+，实测 3.11.9）+ sqlite3 | 数据存储与命令行；**零第三方依赖**，只用标准库 |
+| VSCode / CodeBuddy 扩展 | TypeScript（无打包，纯 JS） | 侧边栏三个视图；**读写均通过 `qa_query.py` 子进程**（需本机可用 Python） |
 | 桌面客户端 | Tauri (Rust + WebView2) | 浏览器，读取同目录 qa.db |
 | 数据库 | SQLite | 单文件 `qa.db`，零配置 |
 
@@ -54,12 +55,24 @@ python <skill-path>/scripts/qa_tool.py append \
 
 ```
 scripts/
-├── db.py               # 共享 DB 逻辑（connect/ensure_schema，自动迁移 + 4 位零填充）
-├── qa_tool.py          # CLI 工具 (setup/append/get/summary/update/delete/next-id/format)
-├── search_qa.py        # 高级搜索
+├── db.py               # 共享 DB 逻辑（connect/ensure_schema，自动迁移 + 4 位零填充 + 记忆系统列/表）
+├── qa_tool.py          # CLI 主工具（setup/append/update/get/summary/delete/format/
+│                       #             guard/split/history/recall/consolidate/health/prune/conflicts）
+├── qa_query.py         # 插件接口（JSON over stdin/stdout：qa-list/qa-get/qa-update/qa-delete/
+│                       #             log-list/log-sessions/projects/stats/health/recall）
+├── memory_guard.py     # 记忆写入闸门（唯一收口，零依赖 3-gram 相似度 + 拆分草案）
+├── memory_recall.py    # 加权召回 + 召回反馈 + 巩固合并 / Pattern 提炼
+├── memory_health.py    # 衰减归档 / 冲突检测 / 健康报告
+├── search_qa.py        # 搜索（薄封装，复用 memory_recall）
 ├── qa_md_sync.py       # QA.md ⇄ qa.db 增量合并
+├── agent_log_hook.py   # CodeBuddy hook → agent_log（情景记忆）
+├── setup_hooks.py      # 一键启用/停用 hooks
 ├── gen_commit_msg.py   # 生成 commit message
 └── qa.db               # SQLite 数据库（在使用 skill 的项目根目录生成）
+
+tests/                  # 自测脚本（python tests/test_memory_*.py）
+vscode-extension/       # VSCode / CodeBuddy 扩展（三视图）
+tauri-app/              # 桌面浏览器（QALogBrowser.exe）
 ```
 
 ## Tauri 项目
