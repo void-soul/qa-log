@@ -22,7 +22,7 @@ function diag(msg) {
   try { out.appendLine(`[${new Date().toLocaleTimeString()}] ${msg}`); } catch (_) { /* 忽略 */ }
 }
 
-const { qaListHtml, qaDetailHtml, logListHtml, logDetailHtml, sessionHtml } = require('./views');
+const { qaListHtml, qaDetailHtml, logListHtml, logDetailHtml, sessionHtml, healthHtml } = require('./views');
 
 // marked.min.js（vendored，与 tauri-app 同源）整个内联进 webview，避免 CSP 资源加载问题
 const MARKED_SRC = (() => {
@@ -681,11 +681,39 @@ class LogViewProvider {
 
 // ── 激活 ───────────────────────────────────────────────────────────────────
 
+class HealthViewProvider {
+  constructor(context) {
+    this.context = context;
+  }
+
+  async resolveWebviewView(view) {
+    this.view = view;
+    view.webview.options = { enableScripts: true };
+    view.webview.onDidReceiveMessage((msg) => {
+      if (msg && msg.type === 'healthRefresh') this.render();
+    });
+    await this.render();
+  }
+
+  async render() {
+    if (!this.view) return;
+    const n = nonce();
+    diag('记忆健康视图刷新: db=' + dbPath());
+    try {
+      const data = await query('health', []);
+      this.view.webview.html = healthHtml(data, n);
+    } catch (e) {
+      this.view.webview.html = healthHtml({ error: String(e.message || e) }, n);
+    }
+  }
+}
+
 function activate(context) {
   diag(`激活: workspace=${workspaceRoot()} db=${dbPath()} script=${scriptPath()}`);
   const qaProvider = new QaViewProvider(context);
-  refreshViews = () => { qaProvider.render(); logProvider.render(); };
   const logProvider = new LogViewProvider(context);
+  const healthProvider = new HealthViewProvider(context);
+  refreshViews = () => { qaProvider.render(); logProvider.render(); healthProvider.render(); };
 
   context.subscriptions.push(
     out,
@@ -695,12 +723,23 @@ function activate(context) {
     vscode.window.registerWebviewViewProvider('qaLog.logView', logProvider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
+    vscode.window.registerWebviewViewProvider('qaLog.healthView', healthProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('qaLog.refresh', () => {
       qaProvider.render();
       logProvider.render();
+      healthProvider.render();
+    }),
+    vscode.commands.registerCommand('qaLog.openHealthReport', () => {
+      const cfg = vscode.workspace.getConfiguration('qaLog');
+      const py = (cfg.get('pythonPath') || 'python').trim() || 'python';
+      const term = vscode.window.createTerminal({ name: 'QA 健康报告' });
+      term.sendText(`"${py}" "${scriptPath()}" --db "${dbPath()}" health`);
+      term.show(true);
     }),
     vscode.commands.registerCommand('qaLog.openDb', async () => {
       const dir = path.dirname(dbPath());

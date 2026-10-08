@@ -22,7 +22,8 @@
   "main": "./src/extension.js",
   "activationEvents": [
     "onView:qaLog.qaView",
-    "onView:qaLog.logView"
+    "onView:qaLog.logView",
+    "onView:qaLog.healthView"
   ],
   "contributes": {
     "viewsContainers": {
@@ -36,6 +37,11 @@
           "id": "qaLogLogContainer",
           "title": "Agent 日志",
           "icon": "media/log.svg"
+        },
+        {
+          "id": "qaLogHealthContainer",
+          "title": "\"记忆健康\"",
+          "icon": "media/health.svg"
         }
       ]
     },
@@ -53,6 +59,13 @@
           "name": "Agent 日志",
           "type": "webview"
         }
+      ],
+      "qaLogHealthContainer": [
+        {
+          "id": "qaLog.healthView",
+          "name": "记忆健康",
+          "type": "webview"
+        }
       ]
     },
     "commands": [
@@ -68,13 +81,17 @@
       {
         "command": "qaLog.setupHooks",
         "title": "QA Log: 启用/停用 Agent 会话自动记录 (hooks)"
+      },
+      {
+        "command": "qaLog.openHealthReport",
+        "title": "QA Log: 在终端打开完整健康报告"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "qaLog.refresh",
-          "when": "view == qaLog.qaView || view == qaLog.logView",
+          "when": "view == qaLog.qaView || view == qaLog.logView || view == qaLog.healthView",
           "group": "navigation"
         }
       ]

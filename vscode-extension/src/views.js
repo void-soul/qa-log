@@ -190,6 +190,31 @@ const COMMON_CSS = `
   .qaform textarea { min-height: 90px; resize: vertical; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; line-height: 1.55; }
   .qaform .row { display: flex; gap: 10px; }
   .qaform .row > div { flex: 1; }
+  /* 记忆健康视图（P4） */
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .stat {
+    background: var(--vscode-editorWidget-background, rgba(128,128,128,.10));
+    border-radius: 4px; padding: 6px 8px; font-size: 10px; opacity: .75;
+  }
+  .stat.warn { background: rgba(224, 168, 0, .16); opacity: 1; }
+  .stat .num { display: block; font-size: 17px; font-weight: 600; opacity: 1; margin-top: 2px; }
+  .sec {
+    margin: 14px 0 4px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .5px; opacity: .7; font-weight: 600;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip {
+    font-size: 10px; padding: 1px 7px; border-radius: 9px;
+    background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
+  }
+  .row {
+    padding: 4px 6px; border-radius: 3px; font-size: 11px; line-height: 1.5;
+    display: flex; flex-direction: column;
+  }
+  .row:hover { background: var(--vscode-list-hoverBackground); }
+  .row .qm { font-weight: 600; }
+  .row .sub { font-size: 10px; opacity: .7; }
+  .hint { font-size: 11px; opacity: .55; padding: 2px 6px; }
   .hidden { display: none !important; }
 `;
 
@@ -833,4 +858,96 @@ function sessionHtml(data, nonce) {
   return page(nonce, csp, body, script);
 }
 
-module.exports = { qaListHtml, qaDetailHtml, logListHtml, logDetailHtml, sessionHtml };
+// ── 侧边栏：记忆健康（P4） ────────────────────────────────────────────────────
+
+function healthHtml(data, nonce) {
+  const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+  const body = `
+  <div class="col">
+    <div class="toolbar">
+      <input id="q" type="text" placeholder="筛选 QID…">
+      <button class="btn" id="refresh" title="刷新">↻</button>
+    </div>
+    <div class="vlist" id="list" style="padding:8px 10px"></div>
+  </div>`;
+  const script = `
+  const DATA = ${jsonScript(data)};
+
+  function card(label, val, cls) {
+    return '<div class="stat ' + (cls || '') + '">' + esc(label)
+      + '</div><div class="num">' + esc(val) + '</div></div>';
+  }
+
+  function render() {
+    const root = $('list');
+    root.textContent = '';
+    if (DATA && DATA.error) {
+      root.innerHTML = '<div class="err">' + esc(DATA.error) + '</div>';
+      return;
+    }
+    const d = DATA || {};
+    const st = d.by_status || {};
+    const stKeys = Object.keys(st);
+    let html = '<div class="stats">';
+    html += card('总条目', d.total != null ? d.total : 0);
+    html += card('已归档', d.archived != null ? d.archived : 0);
+    html += card('待审冲突', d.needs_review != null ? d.needs_review : 0,
+      d.needs_review ? 'warn' : '');
+    const staleN = (d.stale_pending || []).length;
+    html += card('待验证积压', staleN, staleN ? 'warn' : '');
+    html += card('孤立条目', (d.orphans || []).length);
+    html += card('7天新增', d.added_7d != null ? d.added_7d : 0);
+    html += '</div>';
+
+    if (stKeys.length) {
+      html += '<div class="sec">状态分布</div><div class="chips">';
+      stKeys.forEach((k) => {
+        html += '<span class="chip">' + esc(k) + ' : ' + esc(st[k]) + '</span>';
+      });
+      html += '</div>';
+    }
+
+    function block(title, items, render, empty) {
+      if (!items || !items.length) {
+        html += '<div class="sec">' + esc(title) + '</div>';
+        html += '<div class="hint">' + esc(empty) + '</div>';
+        return;
+      }
+      html += '<div class="sec">' + esc(title) + ' (' + items.length + ')</div>';
+      items.slice(0, 12).forEach((it) => { html += render(it); });
+    }
+
+    block('近似重复对（建议 consolidate 合并）', d.duplicate_pairs, (x) =>
+      '<div class="row"><span class="qm">' + esc(x.a) + ' ↔ ' + esc(x.b)
+      + '</span><span class="sub">score ' + esc(x.score) + ' · 保留 ' + esc(x.keep_hint) + '</span></div>',
+      '无');
+
+    block('冲突待审（现象相似但结论不同）', d.conflicts, (x) =>
+      '<div class="row"><span class="qm">' + esc(x.a) + ' ↔ ' + esc(x.b)
+      + '</span><span class="sub">' + esc(x.reason || '') + '</span></div>',
+      '无');
+
+    block('待验证积压（>180 天）', d.stale_pending, (q) =>
+      '<div class="row"><span class="qm">' + esc(q) + '</span></div>', '无');
+
+    block('孤立条目（无文件/标签/关系）', d.orphans, (q) =>
+      '<div class="row"><span class="qm">' + esc(q) + '</span></div>', '无');
+
+    root.innerHTML = html;
+    const kw = $('q').value.trim().toLowerCase();
+    if (kw) {
+      Array.prototype.forEach.call(root.querySelectorAll('.row'), (el) => {
+        const t = (el.textContent || '').toLowerCase();
+        el.style.display = t.indexOf(kw) >= 0 ? '' : 'none';
+      });
+    }
+  }
+
+  $('refresh').addEventListener('click', () => vscode.postMessage({ type: 'healthRefresh' }));
+  $('q').addEventListener('input', render);
+  render();
+  `;
+  return page(nonce, csp, body, script);
+}
+
+module.exports = { qaListHtml, qaDetailHtml, logListHtml, logDetailHtml, sessionHtml, healthHtml };
