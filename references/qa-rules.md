@@ -99,3 +99,65 @@ echo '{"question":"中文"}' | python qa_tool.py append --json
 - **分批次提交**：不同功能点分多个 commit，不要一次性提交全部改动。
 - **只 `git add` 审查过的文件**，绝不用 `git add -A`。
 - 提交前**必须获得用户授权**（见第 2 节）。
+
+---
+
+## 5. 记忆写入纪律（P1 闸门）
+
+`qa_entries` 是长期记忆，写入质量比写入数量重要。所有写入通道（`qa_tool.py append/update`、插件 `qa_query.py qa-update`、`qa_md_sync.py sync`）都会经过 `scripts/memory_guard.py`。
+
+### 5.1 硬约束（违反即被拒，exit 3）
+
+- **不得写入占位内容**：`待填写` / `无` / `N/A` / `test` 等，现象/需求必须写清具体问题
+- **现象/需求不得过短**（< 8 字符），不得整段重复表述（去重后有效内容 < 40 字判为噪声）
+- **不得超长**：现象 4KB / 根因 8KB / 方案 16KB / 涉及文件 8KB——**不贴大段原始日志**，只写结论
+- **不得重复记忆**：与既有条目相似度 ≥ 0.82（同类别或涉及相同文件）时拒绝，应改为 `update` 已有条目
+- **状态只能是**状态机 5 值（见第 1 节），非法值一律拒绝
+
+### 5.2 粒度约束：一条只讲一件事
+
+命中以下任一信号会**警告并给出拆分草案**（`split_signal`），超出硬阈值则拒绝写入：
+
+- 方案编号步骤 > 6 项
+- 涉及文件表 > 5 行（> 12 行硬拒）
+- 跨模块 > 3 个（按路径首段）
+- 现象含 ≥ 3 个独立编号项且长度 > 300 字符
+
+处理方式：
+
+```bash
+python <skill-path>/scripts/qa_tool.py split Q-0012            # 打印拆分草案（不写库）
+python <skill-path>/scripts/qa_tool.py split Q-0012 --apply    # 确认后建子条目（写 parent_qid）
+```
+
+拆分后：父条目只留总览 + 子条目索引，细节下沉到子条目；子条目的根因/方案需**分别补齐**。
+
+### 5.3 写入节奏与内容取舍
+
+- **一次会话新增记忆上限默认 3 条**，超出需用户明确同意
+- **禁止写入**：临时排错过程、被推翻的尝试、与本条无关的闲聊、重复表述
+- **30 秒复用检验**：每条记忆必须能回答"未来的我遇到什么场景会需要它"，答不出就不写
+- **批量写入默认 dry-run**，`--yes` / `--force` 才落库
+
+### 5.4 例外与工具
+
+- `qa_tool.py guard [ID] [--json]`：干跑校验，不落库；exit 0=ok / 1=warn / 3=reject
+- `--force`：闸门 reject 时强制写入（仅在能说清理由时使用）
+- `qa_md_sync.py sync`：QA.md 常含人工批量整理内容，默认**报告并放行**（不合规清单照常打印），加 `--strict` 才阻断
+- 阈值集中在 `memory_guard.py` 顶部常量，需调整时改那里，不要在调用方绕过
+
+### 5.5 审计与溯源（P2）
+
+任何写操作都会在 `qa_events` 留痕：`append` / `update` / `verify`（状态首次进入「已验证」）/ `split` / `delete` / `guard_bypass`（QA.md 同步放行不合规条目）。条目间关系记在 `qa_links`（`derived_from` / `duplicates` / `supersedes` / `contradicts` / `relates_to`）。
+
+- **删除也必须留痕**：先写 `delete` 事件再执行删除，`qa_events` 无外键，条目消失后流水仍在
+- 查询审计：`python <skill-path>/scripts/qa_tool.py history Q-0003`
+- 审计表只增不删；任何"清理历史"的诉求都要先经用户确认
+
+### 5.6 召回与巩固（P3）
+
+- **统一入口**：`python <skill-path>/scripts/qa_tool.py recall "<查询词>"`（加权：现象×3 / 根因×2 / 文件×2 / 方案×1 + 重要性 + 召回次数 + 新鲜度 + 关系引用）；`recall --qid Q-0003` 用于"找相似记忆"
+- **召回即反馈**：命中会回写 `access_count` / `last_access_at` 并记 `recall` 事件——**常用条目权重会自然升高**；只想查不想改数据时加 `--no-feedback`
+- 归档条目默认不参与召回，`--include-archived` 才可见（**永不删除**）
+- **巩固**：`qa_tool.py consolidate` 默认只出建议（近似条目对 + Pattern 候选组）；`--apply` 才执行，且**只归档不删除**（被并入方 `archived=1` + `supersedes` 关系 + `merge` 事件）
+- 短查询（≤4 字符）走"包含"判断，长查询走 3-gram 相似度——两者都零依赖

@@ -40,6 +40,8 @@ If the user's request has multiple distinct sub-questions, you will create multi
 
 **Rule of thumb:** Each entry should be answerable independently. If fixing one doesn't resolve the other, they're separate entries.
 
+**闸门提示**：`append` 会自动过记忆写入闸门（`memory_guard.py`）——占位/过短/超长/与既有条目重复的内容会被拒绝（exit 3），命中拆分信号会给出警告与拆分草案。若被拒且你确认内容无误，可加 `--force`；若提示拆分，先 `qa_tool.py split <ID> --dry-run` 看草案（见第 5 节纪律）。
+
 ### Step 3: Run the append command
 For each question, run. **中文现象/需求必须用 Python `subprocess` + bare `--json`（stdin）传递，绝不能放命令行参数或 PowerShell 管道里**（编码规则见 [`references/qa-rules.md`](../references/qa-rules.md)）：
 

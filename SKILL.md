@@ -129,7 +129,12 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 | `summary` | `-n/--limit` | 列出所有条目（ID + 标题）。`-n N` 只显示前 N 条（按 qid DESC）|
 | `get <ID>` | `ID`（如 `Q-0003` 或 `3`） | 查看单条完整内容 |
 | `append` | `--json`（推荐）, `-c/--category`, `-q/--question` | 新增条目（ID 自动递增，状态默认 Pending） |
-| `update <ID>` | `--json`（推荐）, `-q/--question`, `-s/--status`, `-r/--root-cause`, `-a/--answer`, `-f/--files` | 更新已有条目（自动写 `updated_at`） |
+| `update <ID>` | `--json`（推荐）, `-q/--question`, `-s/--status`, `-r/--root-cause`, `-a/--answer`, `-f/--files`, `--force` | 更新已有条目（自动写 `updated_at`）。默认过**写入闸门**，reject 时 exit 3；`--force` 放行 |
+| `guard [ID]` | `--json` | 干跑写入闸门（不落库）：检查 JSON 草稿或库中条目。exit 0=ok / 1=warn / 3=reject |
+| `split <ID>` | `--apply`, `--yes` | 拆分"一条多诉求"的条目：默认只打印草案，`--apply` 建子条目（写 `parent_qid` + `derived_from` 关系） |
+| `history <ID>` | — | 打印该条记忆的**审计流水**（`qa_events`：append/update/verify/split/delete…）与关系（`qa_links`）；条目已删除也能查到 |
+| `recall "<查询词>"` | `--qid`, `-n`, `-s`, `-c`, `--include-archived`, `--no-feedback` | **加权召回**（字段权重+重要性+召回次数+新鲜度+关系）；命中回写召回反馈。`--qid` 用于"找相似记忆" |
+| `consolidate` | `--apply`, `--yes`, `--threshold`, `--min-size`, `--no-pattern` | **巩固**：近似条目去重/合并 + Pattern 模式提炼建议（默认 dry-run，`--apply` 才归档合并，永不删除） |
 | `next-id` | — | 打印下一个可用 ID |
 | `delete <ID>` | `-f/--force`, `--dry-run` | 删除单条（默认有确认提示）。`--force` 跳过确认；`--dry-run` 只显示不删 |
 | `format` | — | 校验并报告 qa.db 条目结构问题 |

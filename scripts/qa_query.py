@@ -108,7 +108,10 @@ def act_qa_get(conn, a):
 
 
 def act_qa_update(conn, a):
-    """更新 QA 记录。字段经 stdin JSON 传入（中文内容不走命令行，规避乱码）。"""
+    """更新 QA 记录。字段经 stdin JSON 传入（中文内容不走命令行，规避乱码）。
+
+    写入前必过记忆闸门（memory_guard）；reject 时拒绝写入，除非 JSON 里带 "force": true。
+    """
     import db as qa_db
 
     raw = sys.stdin.read() or ""
@@ -126,6 +129,29 @@ def act_qa_update(conn, a):
     if not fields:
         emit(False, error="no fields to update")
         return
+
+    # 记忆闸门：按合并后的最终值检查（现状插件路径无任何校验，故必须收口）
+    try:
+        import memory_guard
+        row0 = conn.execute("SELECT * FROM qa_entries WHERE qid = ?", (qid,)).fetchone()
+        if row0 is None:
+            emit(False, error=f"not found: {qid}")
+            return
+        merged = {
+            "phenomenon": fields.get("phenomenon", row0["phenomenon"] or ""),
+            "root_cause": fields.get("root_cause", row0["root_cause"] or ""),
+            "solution": fields.get("solution", row0["solution"] or ""),
+            "files": fields.get("files", row0["files"] or ""),
+            "category": fields.get("category", row0["category"] or ""),
+            "status": fields.get("status", row0["status"] or ""),
+        }
+        result = memory_guard.check(merged, conn=conn, exclude_qid=qid)
+        if result["level"] == "reject" and not data.get("force"):
+            emit(False, error="guard rejected: " + memory_guard.format_report(result, "[guard]"))
+            return
+    except ImportError:
+        pass  # guard 模块缺失时不阻断插件写入（P1 部署异常兜底）
+
     sets = ", ".join(f"{k} = ?" for k in fields)
     params = list(fields.values()) + [qid]
     try:
@@ -141,6 +167,13 @@ def act_qa_update(conn, a):
         emit(False, error=f"not found: {qid}")
         return
     row = conn.execute("SELECT * FROM qa_entries WHERE qid = ?", (qid,)).fetchone()
+    # 审计：状态进入「已验证」单独记 verify，其余记 update
+    try:
+        evt = ("verify" if (fields.get("status") == "已验证" and
+                            str(row["status"] if row else "") != "已验证") else "update")
+        qa_db.log_event(conn, qid, evt, "fields=" + ",".join(fields.keys()))
+    except Exception:
+        pass
     emit(True, {"entry": dict(row) if row else None})
 
 
@@ -148,6 +181,16 @@ def act_qa_delete(conn, a):
     import db as qa_db
 
     qid = qa_db.normalize_id(a.qid or "")
+    row0 = conn.execute(
+        "SELECT date, category, status, phenomenon FROM qa_entries WHERE qid = ?", (qid,)
+    ).fetchone()
+    if row0 is None:
+        emit(False, error=f"not found: {qid}")
+        return
+    # 审计：删除也留痕（先写 event 再删）
+    qa_db.log_event(conn, qid, "delete",
+                    " | ".join([str(row0["date"] or ""), str(row0["category"] or ""),
+                                str(row0["status"] or ""), (row0["phenomenon"] or "")[:120]]))
     try:
         cur = conn.execute("DELETE FROM qa_entries WHERE qid = ?", (qid,))
         conn.commit()

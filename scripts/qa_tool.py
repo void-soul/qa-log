@@ -23,10 +23,14 @@ Subcommands:
   setup                Init qa.db (create table) + copy QALogBrowser.exe to project root
   summary              List all entries (ID + title only)
   get <ID>             Get full content of a single entry by ID
-  append               Append a new entry (auto-increments ID)
-  update <ID>          Update an existing entry's solution/status
+  append               Append a new entry (auto-increments ID; goes through memory guard)
+  update <ID>          Update an existing entry's solution/status (goes through memory guard)
   next-id              Print the next available ID
+  delete <ID>          Delete one entry (with confirmation prompt)
   format               Validate and report qa.db structure issues
+  guard [ID]           Dry-run the memory write gate (exit 0=ok / 1=warn / 3=reject)
+  split <ID>           Split a multi-topic entry into child entries (draft by default)
+  history <ID>         Print audit trail (qa_events) + relations (qa_links) of one entry
 """
 
 import argparse
@@ -41,12 +45,17 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from db import (
     DB_NAME,
+    add_link,
     connect as _db_connect,
     ensure_schema,
     get_next_qid,
+    log_event,
     normalize_id,
     resolve_db_path,
 )
+
+# 记忆写入闸门（P1）：append/update 默认过 guard，reject 时拒绝写入
+import memory_guard
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -151,6 +160,98 @@ def cmd_setup(args):
               f"or copy it into the skill bin/ directory.")
 
 
+def cmd_recall(args):
+    """加权召回（记忆系统 P3）：命中即回写access_count / last_access_at + recall 事件。"""
+    import memory_recall as MR
+
+    conn = connect(args.db)
+    if args.qid:
+        row = conn.execute(
+            "SELECT phenomenon, root_cause, solution, files FROM qa_entries WHERE qid = ?",
+            (normalize_id(args.qid),),
+        ).fetchone()
+        if row is None:
+            print(f"Entry {normalize_id(args.qid)} not found.", file=sys.stderr)
+            conn.close()
+            sys.exit(1)
+        query = " ".join(x for x in (row["phenomenon"], row["root_cause"],
+                                     row["solution"], row["files"]) if x)[:400]
+    else:
+        query = args.query or ""
+    if not query.strip():
+        print("recall 需要查询词（或用 --qid 以某条内容为查询）", file=sys.stderr)
+        conn.close()
+        sys.exit(2)
+
+    hits = MR.recall(conn, query, limit=args.limit,
+                     include_archived=args.include_archived,
+                     feedback=not args.no_feedback,
+                     status=args.status, category=args.category)
+    if not hits:
+        print("No matching entries found.")
+        conn.close()
+        return
+    print(f"Recall '{query[:60]}' → {len(hits)} hit(s)"
+          + ("（已回写召回反馈）" if not args.no_feedback else "（未回写反馈）"))
+    for h in hits:
+        print(f"  score={h['score']:.3f}  {h['qid']} | {h['status']} | {h['category']} | "
+              f"热度={h['access_count']}{' [archived]' if h['archived'] else ''}")
+        print(f"        {h['title']}")
+        print(f"        匹配字段: {h['match']}")
+    conn.close()
+
+
+def cmd_consolidate(args):
+    """巩固（记忆系统 P3）：近似条目/模式提炼建议；--apply 才落库。"""
+    import memory_recall as MR
+
+    conn = connect(args.db)
+    pairs = MR.find_near_duplicates(conn, threshold=args.threshold)
+    groups = [] if args.no_pattern else MR.suggest_patterns(conn, min_size=args.min_size)
+
+    print(f"[consolidate] 近似条目 {len(pairs)} 对（阈值 {args.threshold}）；模式候选 {len(groups)} 组")
+    for p in pairs[:20]:
+        print(f"  [{p['action']}] {p['a']} ↔ {p['b']}  score={p['score']}  建议保留 {p['keep_hint']}")
+    for g in groups[:10]:
+        print(f"  [pattern] {g['category']} / {'/'.join(g['modules'])}  "
+              f"{g['size']} 条  平均相似度={g['avg_similarity']}")
+        print(f"           {', '.join(g['qids'][:10])}")
+
+    if not args.apply:
+        print("\n[dry-run] 未做任何改动。确认后加 --apply 执行合并（丢弃方归档，不删除）。")
+        conn.close()
+        return
+    if not pairs:
+        print("\n[consolidate] 无可合并项")
+        conn.close()
+        return
+    if not args.yes:
+        try:
+            ans = input("\n确认合并？丢弃方将被归档（recall --include-archived 可见）[y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted", file=sys.stderr)
+            conn.close()
+            sys.exit(130)
+        if ans not in ("y", "yes"):
+            print("Aborted")
+            conn.close()
+            return
+
+    done = failed = 0
+    for p in pairs:
+        keep = p["keep_hint"]
+        drop = p["b"] if keep == p["a"] else p["a"]
+        ok, msg = MR.merge_entries(conn, keep, drop)
+        if ok:
+            done += 1
+            print(f"  merged: {msg}")
+        else:
+            failed += 1
+            print(f"  FAILED: {p['a']} ↔ {p['b']}: {msg}")
+    print(f"\n[consolidate] 合并 {done} 对，失败 {failed} 对")
+    conn.close()
+
+
 def cmd_summary(args):
     """List all entries: ID + title only."""
     conn = connect(args.db)
@@ -246,6 +347,188 @@ def read_json_input(args):
         return None
 
 
+def _guard_fields_from_data(data, category=None, status=None):
+    """把 append/update 的 JSON 输入规整成 guard 用的字段字典。"""
+    return {
+        "phenomenon": (data.get("phenomenon") or data.get("question") or "").strip(),
+        "root_cause": (data.get("root_cause") or "").strip(),
+        "solution": (data.get("solution") or "").strip(),
+        "files": (data.get("files") or "").strip(),
+        "category": category or data.get("category") or "Other",
+        "status": status or data.get("status") or "Pending",
+    }
+
+
+def _enforce_guard(fields, conn, exclude_qid=None, force=False, action=""):
+    """跑写入闸门：reject 且未 --force → 打印报告并 exit 3；warn → 打印提示继续。"""
+    result = memory_guard.check(fields, conn=conn, exclude_qid=exclude_qid)
+    if result["level"] == "reject" and not force:
+        print(memory_guard.format_report(result, title=f"[guard] 拒绝写入{action}"), file=sys.stderr)
+        print("[guard] 如确认内容无误，可加 --force 强制写入。", file=sys.stderr)
+        conn.close()
+        sys.exit(3)
+    if result["level"] != "ok":
+        print(memory_guard.format_report(result, title=f"[guard] 提示{action}"), file=sys.stderr)
+    return result
+
+
+def cmd_guard(args):
+    """干跑写入闸门：检查 JSON 草稿或库中已有条目，不落库。"""
+    conn = connect(args.db)
+    data = read_json_input(args)
+    if args.id:
+        target = normalize_id(args.id)
+        row = conn.execute("SELECT * FROM qa_entries WHERE qid = ?", (target,)).fetchone()
+        if row is None:
+            print(f"Entry {target} not found.", file=sys.stderr)
+            conn.close()
+            sys.exit(1)
+        fields = {
+            "phenomenon": row["phenomenon"] or "", "root_cause": row["root_cause"] or "",
+            "solution": row["solution"] or "", "files": row["files"] or "",
+            "category": row["category"] or "", "status": row["status"] or "",
+        }
+        exclude = target
+        title = f"[guard] 检查库中条目 {target}"
+    else:
+        fields = _guard_fields_from_data(data or {})
+        exclude = None
+        title = "[guard] 检查草稿"
+    result = memory_guard.check(fields, conn=conn, exclude_qid=exclude)
+    print(memory_guard.format_report(result, title=title))
+    conn.close()
+    sys.exit(3 if result["level"] == "reject" else (1 if result["level"] == "warn" else 0))
+
+
+def cmd_split(args):
+    """把一条含多条独立诉求的条目拆成多条子条目（默认只出草案）。"""
+    conn = connect(args.db)
+    qid = normalize_id(args.id)
+    row = conn.execute("SELECT * FROM qa_entries WHERE qid = ?", (qid,)).fetchone()
+    if row is None:
+        print(f"Entry {qid} not found.", file=sys.stderr)
+        conn.close()
+        sys.exit(1)
+
+    fields = {
+        "phenomenon": row["phenomenon"] or "", "root_cause": row["root_cause"] or "",
+        "solution": row["solution"] or "", "files": row["files"] or "",
+        "category": row["category"] or "", "status": row["status"] or "",
+    }
+    plan = memory_guard.scan_split(fields)
+    if not plan["drafts"]:
+        print(f"[split] {qid} 未发现可拆分结构"
+              + (f"（信号：{'; '.join(plan['reasons'])}）" if plan["reasons"] else ""))
+        conn.close()
+        return
+
+    print(f"[split] {qid} 拆分草案：策略={plan['strategy']}，共 {len(plan['drafts'])} 条")
+    for i, s in enumerate(plan["reasons"], 1):
+        print(f"  信号{i}: {s}")
+    for k, d in enumerate(plan["drafts"], 1):
+        print(f"\n  ── 子条目 {k} ──")
+        print("  现象/需求: " + (d["phenomenon"] or "").replace("\n", "\n              "))
+        if d["files"]:
+            print("  涉及文件:")
+            for line in d["files"].splitlines():
+                print("    " + line)
+
+    if not args.apply:
+        print("\n[dry-run] 未写入任何内容。确认后加 --apply 落库。")
+        conn.close()
+        return
+    if not args.yes:
+        try:
+            ans = input(f"\n确认按上述草案拆分 {qid}？（会新建 {len(plan['drafts'])} 条）[y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted", file=sys.stderr)
+            conn.close()
+            sys.exit(130)
+        if ans not in ("y", "yes"):
+            print("Aborted")
+            conn.close()
+            return
+
+    created = []
+    for d in plan["drafts"]:
+        child = get_next_qid(conn)
+        conn.execute(
+            """INSERT INTO qa_entries
+               (qid, date, category, status, phenomenon, root_cause, solution, files, parent_qid)
+               VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?)""",
+            (child, date.today().isoformat(), fields["category"],
+             d["phenomenon"].strip(), PLACEHOLDER,
+             f"{PLACEHOLDER}\n\n（拆分自 {qid}：根因/方案待分别补充）", d["files"], qid),
+        )
+        created.append(child)
+        add_link(conn, child, qid, "derived_from", f"split of {qid}")
+        log_event(conn, child, "split", f"parent={qid}")
+    # 父条目追加子条目索引，细节下沉到子条目
+    idx = "\n".join(f"- {c}（拆分自本条）" for c in created)
+    conn.execute(
+        """UPDATE qa_entries
+           SET solution = COALESCE(NULLIF(solution,''), '') || char(10) || char(10) ||
+               '**已拆分为以下子条目：**' || char(10) || ?,
+               updated_at = datetime('now','localtime')
+           WHERE qid = ?""",
+        (idx, qid),
+    )
+    conn.commit()
+    log_event(conn, qid, "split", "children=" + ",".join(created))
+    conn.close()
+    print(f"\n[split] {qid} 已拆分为: {', '.join(created)}")
+    print(f"[split] 请分别补齐各子条目的根因/方案（当前为 {PLACEHOLDER}）")
+
+
+def cmd_history(args):
+    """打印某条记忆的完整操作流水（审计 + 关系）。"""
+    conn = connect(args.db)
+    qid = normalize_id(args.id)
+    row = conn.execute(
+        "SELECT qid, date, category, status, parent_qid, importance, access_count,"
+        " last_access_at, created_at, updated_at FROM qa_entries WHERE qid = ?",
+        (qid,),
+    ).fetchone()
+    if row is None:
+        print(f"[history] 条目 {qid} 已不存在（可能被删除），以下为其审计流水：")
+    else:
+        print(f"[history] {row['qid']} | {row['date']} | {row['category']} | {row['status']}")
+        print(f"  created_at={row['created_at']}  updated_at={row['updated_at']}")
+        print(f"  parent_qid={row['parent_qid']}  importance={row['importance']}"
+              f"  access_count={row['access_count']}  last_access_at={row['last_access_at']}")
+
+    events = conn.execute(
+        "SELECT id, event, actor, detail, created_at FROM qa_events WHERE qid = ? ORDER BY id",
+        (qid,),
+    ).fetchall()
+    print(f"  审计流水（{len(events)} 条）:")
+    for e in events:
+        d = (e["detail"] or "").replace("\n", " ")[:120]
+        print(f"    {e['created_at']}  {e['event']:<14} {e['actor']:<6} {d}")
+
+    outs = conn.execute(
+        "SELECT kind, to_qid, note FROM qa_links WHERE from_qid = ? ORDER BY id", (qid,)
+    ).fetchall()
+    ins = conn.execute(
+        "SELECT kind, from_qid, note FROM qa_links WHERE to_qid = ? ORDER BY id", (qid,)
+    ).fetchall()
+    if outs:
+        print("  出边关系:")
+        for r in outs:
+            print(f"    --{r['kind']}--> {r['to_qid']}  {r['note']}")
+    if ins:
+        print("  入边关系:")
+        for r in ins:
+            print(f"    <--{r['kind']}-- {r['from_qid']}  {r['note']}")
+
+    kids = conn.execute(
+        "SELECT qid FROM qa_entries WHERE parent_qid = ? ORDER BY qid", (qid,)
+    ).fetchall()
+    if kids:
+        print("  子条目: " + ", ".join(k["qid"] for k in kids))
+    conn.close()
+
+
 def cmd_append(args):
     """Append a new entry with auto-generated ID."""
     conn, created = ensure_qa_db(args.db)
@@ -256,12 +539,16 @@ def cmd_append(args):
     category = args.category or data.get("category") or "Other"
     question = (args.question or data.get("question") or "").strip()
 
+    _enforce_guard(_guard_fields_from_data(data, category=category, status="Pending"),
+                   conn, force=getattr(args, "force", False), action="")
+
     conn.execute(
         """INSERT INTO qa_entries (qid, date, category, status, phenomenon)
            VALUES (?, ?, ?, 'Pending', ?)""",
         (qid, today, category, question),
     )
     conn.commit()
+    log_event(conn, qid, "append", f"category={category}")
     conn.close()
     print(f"Created {qid}")
 
@@ -311,6 +598,14 @@ def cmd_update(args):
         (data.get("files") if "files" in data else None)
     ) if (args.files is not None or "files" in data) else (row["files"] or "")
 
+    # 写入闸门：按合并后的最终值检查（排除自身，避免自我判重）
+    _enforce_guard(
+        {"phenomenon": new_phenomenon, "root_cause": new_root_cause,
+         "solution": new_solution, "files": new_files,
+         "category": row["category"] or "", "status": new_status},
+        conn, exclude_qid=target, force=getattr(args, "force", False),
+        action=f"（{target}）")
+
     conn.execute(
         """UPDATE qa_entries
            SET status = ?, phenomenon = ?, root_cause = ?, solution = ?,
@@ -319,6 +614,19 @@ def cmd_update(args):
         (new_status, new_phenomenon, new_root_cause, new_solution, new_files, target),
     )
     conn.commit()
+    changed = []
+    for label, old_v, new_v in (
+        ("phenomenon", row["phenomenon"], new_phenomenon),
+        ("root_cause", row["root_cause"] or "", new_root_cause),
+        ("solution", row["solution"] or "", new_solution),
+        ("files", row["files"] or "", new_files),
+        ("status", row["status"], new_status),
+    ):
+        if (old_v or "") != (new_v or ""):
+            changed.append(label)
+    # 状态进入"已验证"是记忆可信度的关键跃迁，单独留痕
+    evt = "verify" if (new_status == "已验证" and row["status"] != "已验证") else "update"
+    log_event(conn, target, evt, "fields=" + (",".join(changed) if changed else "(无变化)"))
     conn.close()
     print(f"Updated {target}")
 
@@ -362,6 +670,13 @@ def cmd_delete(args):
             print("Aborted")
             conn.close()
             return
+
+    # 审计：删除也必须留痕（先写 event 再删；qa_events 无外键，条目消失后流水仍在）
+    snapshot = " | ".join([
+        str(row["date"] or ""), str(row["category"] or ""), str(row["status"] or ""),
+        (title or "")[:120],
+    ])
+    log_event(conn, qid, "delete", snapshot)
 
     cur = conn.execute("DELETE FROM qa_entries WHERE qid = ?", (qid,))
     conn.commit()
@@ -429,8 +744,20 @@ def main():
     p_append = sub.add_parser("append", help="Append a new entry")
     p_append.add_argument("--category", "-c", help="Category (default: Other)")
     p_append.add_argument("--question", "-q", help="Question/phenomenon text (avoid Chinese via CLI)")
+    p_append.add_argument("--force", action="store_true",
+                          help="写入闸门 reject 时仍强制写入（默认拒绝）")
     p_append.add_argument("--json", nargs="?", const="__STDIN__", default=None,
                           help="JSON object as string, or bare --json to read from stdin. PREFERRED for Chinese.")
+
+    p_guard = sub.add_parser("guard", help="干跑写入闸门：检查 JSON 草稿或库中已有条目（不落库）")
+    p_guard.add_argument("id", nargs="?", help="检查库中已有条目（省略则检查 --json 草稿）")
+    p_guard.add_argument("--json", nargs="?", const="__STDIN__", default=None,
+                         help="JSON object as string, or bare --json to read from stdin.")
+
+    p_split = sub.add_parser("split", help="把一条含多条独立诉求的条目拆成子条目（默认 dry-run）")
+    p_split.add_argument("id", help="父条目 ID")
+    p_split.add_argument("--apply", action="store_true", help="真正落库（默认只打印草案）")
+    p_split.add_argument("--yes", action="store_true", help="跳过确认提示")
 
     p_update = sub.add_parser("update", help="Update an existing entry")
     p_update.add_argument("id", help="Entry ID")
@@ -439,16 +766,37 @@ def main():
     p_update.add_argument("--root-cause", "-r", help="Root cause analysis")
     p_update.add_argument("--answer", "-a", help="Solution steps")
     p_update.add_argument("--files", "-f", help="Files changed table (| File | Change |)")
+    p_update.add_argument("--force", action="store_true",
+                          help="写入闸门 reject 时仍强制写入（默认拒绝）")
     p_update.add_argument("--json", nargs="?", const="__STDIN__", default=None,
                           help="JSON object as string, or bare --json to read from stdin. PREFERRED for Chinese.")
 
     p_next = sub.add_parser("next-id", help="Print next available ID")
     sub.add_parser("format", help="Validate qa.db structure")
 
+    p_history = sub.add_parser("history", help="Print audit trail + relations of one entry")
+    p_history.add_argument("id", help="Entry ID (e.g., Q-0003 or just 3)")
+
     p_delete = sub.add_parser("delete", help="Delete one entry by ID (with confirmation prompt)")
     p_delete.add_argument("id", help="Entry ID (e.g., Q-0003 or just 3)")
     p_delete.add_argument("-f", "--force", action="store_true", help="Skip confirmation prompt")
     p_delete.add_argument("--dry-run", action="store_true", help="Show what would be deleted without deleting")
+
+    p_recall = sub.add_parser("recall", help="加权召回（字段权重 + 重要性 + 召回次数 + 新鲜度 + 关系）")
+    p_recall.add_argument("query", nargs="?", help="查询词")
+    p_recall.add_argument("--qid", help="以某条已存在记忆的内容作为查询（找相似记忆）")
+    p_recall.add_argument("-n", "--limit", type=int, default=10, help="返回条数（默认 10）")
+    p_recall.add_argument("-s", "--status", help="仅召回某状态")
+    p_recall.add_argument("-c", "--category", help="按类别过滤（模糊）")
+    p_recall.add_argument("--include-archived", action="store_true", help="包含已归档条目")
+    p_recall.add_argument("--no-feedback", action="store_true", help="不回写召回反馈（只查不改）")
+
+    p_consol = sub.add_parser("consolidate", help="巩固：近似条目/模式提炼建议（默认 dry-run）")
+    p_consol.add_argument("--apply", action="store_true", help="真正执行合并（丢弃方归档，不删除）")
+    p_consol.add_argument("--yes", action="store_true", help="跳过确认提示")
+    p_consol.add_argument("--threshold", type=float, default=0.70, help="近似判定阈值（默认 0.70）")
+    p_consol.add_argument("--min-size", type=int, default=5, help="模式提炼的最小条目数（默认 5）")
+    p_consol.add_argument("--no-pattern", action="store_true", help="跳过模式提炼检测")
 
     args = parser.parse_args()
 
@@ -461,6 +809,11 @@ def main():
         "next-id": cmd_next_id,
         "delete": cmd_delete,
         "format": cmd_format,
+        "recall": cmd_recall,
+        "consolidate": cmd_consolidate,
+        "guard": cmd_guard,
+        "split": cmd_split,
+        "history": cmd_history,
     }
     commands[args.command](args)
 

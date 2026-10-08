@@ -59,6 +59,8 @@ subprocess.run(["python", "scripts/qa_tool.py", "update", "<ID>", "--json"],
 
 > 本阶段设 `已解决待验证`（不设 `已验证`，不提交——提交见 check/batch-commit，需授权）。格式规范（粗体引用、有序列表、文件表格）详见 `qa-log/skills/format-doc`。
 
+> **写入闸门**：`update` 会过 `memory_guard.py`——超长/噪声/与既有条目重复会被拒（exit 3）；命中拆分信号（方案步骤 > 6、文件表 > 5 行、跨模块 > 3）会警告并给拆分草案，此时应先 `split` 再分别填写。纪律见 [`../references/qa-rules.md`](../references/qa-rules.md) 第 5 节。
+
 ## Example
 
 ```python

@@ -19,7 +19,7 @@ import sys
 
 # 共享 DB 逻辑（自动迁移 + 4 位零填充）
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from db import DB_NAME, connect
+from db import DB_NAME, connect, log_event
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -149,7 +149,7 @@ def entry_to_row(entry):
 # ── Commands ────────────────────────────────────────────────────────────────
 
 
-def cmd_sync(md_path, db_path):
+def cmd_sync(md_path, db_path, strict=False):
     if not os.path.exists(md_path):
         print(f"{md_path} not found — nothing to sync. "
               f"(Run `export` first to regenerate it, or pass --md <path>.)")
@@ -161,10 +161,39 @@ def cmd_sync(md_path, db_path):
     # connect() 会自动跑 ensure_schema，legacy schema 自动迁移
     conn = connect(db_path)
 
+    # 记忆闸门（报告优先）：QA.md 常含人工批量整理内容，默认不阻断，只打印不合规清单；
+    # --strict 才拒绝写入。
+    guard_report = []
+
+    def _guard_check(e, vals):
+        try:
+            import memory_guard
+        except ImportError:
+            return None
+        date_, cat, st, phen, root, sol, files_ = vals
+        return memory_guard.check(
+            {"phenomenon": phen, "root_cause": root, "solution": sol,
+             "files": files_, "category": cat, "status": st},
+            conn=conn, exclude_qid=e["qid"])
+
     added = updated = skipped = 0
     for e in entries:
         row = conn.execute("SELECT * FROM qa_entries WHERE qid=?", (e["qid"],)).fetchone()
         vals = entry_to_row(e)
+        g = _guard_check(e, vals)
+        if g and g["level"] in ("reject", "warn"):
+            guard_report.append((e["qid"], g))
+            if g["level"] == "reject":
+                log_event(conn, e["qid"], "guard_bypass",
+                          ";".join(i["code"] for i in g["issues"] if i["level"] == "reject"),
+                          actor="tool")
+            if g["level"] == "reject" and strict:
+                print(f"[guard] --strict：{e['qid']} 不合规，拒绝同步", file=sys.stderr)
+                for i in g["issues"]:
+                    if i["level"] == "reject":
+                        print(f"  - ({i['code']}) {i['field']}: {i['message']}", file=sys.stderr)
+                conn.close()
+                return 3
         if row is None:
             conn.execute(
                 "INSERT INTO qa_entries "
@@ -194,6 +223,14 @@ def cmd_sync(md_path, db_path):
     print(f"Sync {md_path} -> {db_path}: "
           f"{added} added, {updated} updated, {skipped} unchanged "
           f"({len(entries)} parsed; {total} in db)")
+    if guard_report:
+        n_rej = sum(1 for _, g in guard_report if g["level"] == "reject")
+        print(f"[guard] 记忆闸门：{len(guard_report)} 条不合规"
+              f"（reject {n_rej} / warn {len(guard_report) - n_rej}）"
+              + ("，已按 --strict 阻断" if strict else "，已放行（如需阻断加 --strict）"))
+        for qid, g in guard_report:
+            codes = "；".join(i["code"] for i in g["issues"] if i["level"] == g["level"])
+            print(f"  {qid} [{g['level']}] {codes}"[:180])
     return 0
 
 
@@ -242,6 +279,8 @@ def main():
                         help="sync (QA.md -> qa.db, default) | export (qa.db -> QA.md)")
     parser.add_argument("--md", help=f"Path to {MD_NAME} (default: ./{MD_NAME})")
     parser.add_argument("--db", help=f"Path to {DB_NAME} (default: ./{DB_NAME})")
+    parser.add_argument("--strict", action="store_true",
+                        help="sync 时若记忆闸门判定 reject 则拒绝写入（默认报告并放行）")
 
     args = parser.parse_args()
 
@@ -250,7 +289,7 @@ def main():
 
     if args.command == "export":
         sys.exit(cmd_export(db_path, md_path))
-    sys.exit(cmd_sync(md_path, db_path))
+    sys.exit(cmd_sync(md_path, db_path, strict=args.strict))
 
 
 if __name__ == "__main__":
