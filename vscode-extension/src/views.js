@@ -223,7 +223,8 @@ const COMMON_JS = `
   const ROW_H = ${ROW_H};
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   const vscode = acquireVsCodeApi();
 
   // 虚拟滚动：固定行高，只渲染可见窗口（+overscan），上千条也只挂载几十个节点
@@ -285,6 +286,13 @@ const COMMON_JS = `
 
     return {
       render() { spacer.style.height = (items.length * ROW_H) + 'px'; visible = null; update(); },
+      // 空态占位必须写进spacer 内部：直接给 container.innerHTML 赋值会把 spacer
+      // 从 DOM 里摘掉，闭包仍持有它 → 之后所有行都渲染进「脱钩」的节点，列表永久空白。
+      placeholder(html) {
+        visible = null;
+        spacer.style.height = '';
+        spacer.innerHTML = html;
+      },
       select: select,
       pick: pick,
     };
@@ -376,8 +384,8 @@ function qaListHtml(data, nonce) {
       (e, idx) => { list.select(idx); vscode.postMessage({ type: 'openDetail', qid: e.qid }); });
 
     function showEmpty() {
-      $('list').innerHTML = '<div class="empty">当前项目还没有 QA 记录。<br>'
-        + '<span style="opacity:.6;font-size:11px">数据源: ' + esc(DIAG.db || '') + '</span></div>';
+      list.placeholder('<div class="empty">当前项目还没有 QA 记录。<br>'
+        + '<span style="opacity:.6;font-size:11px">数据源: ' + esc(DIAG.db || '') + '</span></div>');
     }
 
     function applyFilter() {
@@ -390,8 +398,10 @@ function qaListHtml(data, nonce) {
           .join(' ').toLowerCase().includes(kw);
       });
       $('cnt').textContent = filtered.length + ' 条';
+      // 空态一律走 virtualList 的 placeholder（写进 spacer 内部）：
+      // 给 container.innerHTML 赋值会让 spacer 脱钩，导致清空搜索后列表再也回不来。
       if (!filtered.length && !entries.length) { showEmpty(); return; }
-      if (!filtered.length) { $('list').innerHTML = '<div class="empty">无匹配条目</div>'; return; }
+      if (!filtered.length) { list.placeholder('<div class="empty">无匹配条目</div>'); return; }
       list.render();
     }
     $('q').addEventListener('input', applyFilter);
@@ -536,10 +546,16 @@ function qaDetailHtml(entry, nonce, markedSrc) {
       return;
     }
     const a = e.target && e.target.closest ? e.target.closest('a') : null;
-    if (a && a.href && /^https?:/i.test(a.href)) {
+    if (!a) return;
+    // 只放行 http(s)：数据来自 qa.db（AI 写入），不能让条目内容生成可执行的
+    // command: / javascript: / file: / vscode: URI（marked 不做协议白名单）。
+    const href = String(a.getAttribute('href') || '').trim().toLowerCase();
+    if (!href.startsWith('http://') && !href.startsWith('https://')) {
       e.preventDefault();
-      vscode.postMessage({ type: 'openExternal', url: a.href });
+      return;
     }
+    e.preventDefault();
+    vscode.postMessage({ type: 'openExternal', url: a.href });
   });
 
   renderView();`;
@@ -626,14 +642,15 @@ function logListHtml(data, nonce) {
       $('cnt').textContent = filtered.length + ' 条';
       if (!filtered.length && !logs.length) {
         // 明确空：给出诊断线索而不是让人摸不着头脑
-        $('list').innerHTML = '<div class="empty">本项目还没有输入历史。<br>'
+        //（写进 spacer 内部，不能覆盖 container —— 会让虚拟列表的 spacer 脱钩）
+        list.placeholder('<div class="empty">本项目还没有输入历史。<br>'
           + '确认已启用自动记录（点击上方 ⚙）并在启用后<b>重启 CodeBuddy</b>，'
           + '然后发一条消息试试。<br>'
-          + '<span style="opacity:.6;font-size:11px">数据源: ' + esc(DIAG.source || '') + '</span></div>';
+          + '<span style="opacity:.6;font-size:11px">数据源: ' + esc(DIAG.source || '') + '</span></div>');
         $('cnt').textContent = '0 条';
-        list.render();
         return;
       }
+      if (!filtered.length) { list.placeholder('<div class="empty">无匹配记录</div>'); return; }
       list.render();
     }
     $('q').addEventListener('input', applyFilter);
@@ -867,7 +884,8 @@ function sessionHtml(data, nonce) {
  */
 function statCardHtml(label, val, cls) {
   const esc = (s) => String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   // .num 必须是 .stat 的子节点：CSS 用 `.stat .num` 控制大号数字，
   // 且 .stats 是 3 列网格，拆成兄弟节点会让标签与数字各占一格。
   return '<div class="stat ' + (cls || '') + '">' + esc(label)

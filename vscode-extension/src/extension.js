@@ -11,7 +11,7 @@
 // 建表/迁移逻辑，避开 Electron Node 对 node:sqlite 的版本差异）。
 
 const vscode = require('vscode');
-const { execFile, execFileSync } = require('child_process');
+const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -33,8 +33,18 @@ const MARKED_SRC = (() => {
 // ── CodeBuddy hooks 管理（Node 版，与 scripts/setup_hooks.py 逻辑一致） ────
 
 const CB_SETTINGS = path.join(os.homedir(), '.codebuddy', 'settings.json');
-const CB_BACKUP = CB_SETTINGS + '.bak-agentlog';
 const HOOK_EVENTS = ['UserPromptSubmit', 'Stop'];
+const MAX_QA_ROWS = 2000;   // 侧边栏一次拉取的 QA 条数上限（防整库 JSON 灌进 webview）
+
+/**
+ * 配置值要拼进 shell 命令行（hooks 的 command /集成终端）前必须过白名单。
+ * `qaLog.pythonPath` / `dbPath` / `scriptPath` 是 window-scope 配置，可被仓库内
+ * `.vscode/settings.json` 覆盖；含引号/分隔符/重定向符的值一律拒绝。
+ */
+function shellSafe(s) {
+  const v = String(s == null ? '' : s);
+  return /["'`$&|<>^;%!*?()\r\n]/.test(v) ? null : v;
+}
 
 function hookScriptPath() {
   return path.join(path.dirname(scriptPath()), 'agent_log_hook.py');
@@ -46,11 +56,25 @@ function isOurHook(cfg, event) {
     String(h.command || '').includes('agent_log_hook.py')));
 }
 
+/** 只摘掉本脚本注册的 group，**保留用户自己挂在同一事件上的 hook**。 */
+function stripOurs(groups) {
+  return (groups || []).filter((g) =>
+    !(g.hooks || []).some((h) => String(h.command || '').includes('agent_log_hook.py')));
+}
+
 function hookEntry() {
   const script = hookScriptPath().replace(/\\/g, '/');
+  const py = pythonCommand();
+  if (shellSafe(script) === null) {
+    throw new Error(`qaLog.scriptPath 含非法字符，已拒绝写入 hooks：${script}`);
+  }
+  const safePy = shellSafe(py);
+  if (safePy === null) {
+    throw new Error(`qaLog.pythonPath 含非法字符，已拒绝写入 hooks：${py}`);
+  }
   return [{
     // 用配置的 Python 而不是写死 `python`：只装了 `py -3` 的机器上，写死会让 hook 静默失效
-    hooks: [{ type: 'command', command: `${pythonCmdForHook()} "${script}"`, timeout: 30 }],
+    hooks: [{ type: 'command', command: `${isPythonPath(safePy) ? '"' + safePy + '"' : safePy} "${script}"`, timeout: 30 }],
   }];
 }
 
@@ -83,10 +107,17 @@ function installHooks(settingsPath = CB_SETTINGS) {
   for (const ev of Object.keys(hooks)) {
     if (!HOOK_EVENTS.includes(ev) && isOurHook(cfg, ev)) delete hooks[ev];
   }
-  for (const ev of HOOK_EVENTS) hooks[ev] = hookEntry();
+  // 只替换自己那一条：整体覆盖 `hooks[ev] = hookEntry()` 会静默删掉用户自己的 hook
+  let entry;
+  try {
+    entry = hookEntry();
+  } catch (e) {
+    return { ok: false, message: e.message };
+  }
+  for (const ev of HOOK_EVENTS) hooks[ev] = stripOurs(hooks[ev]).concat(entry);
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
   fs.writeFileSync(settingsPath, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
-  return { ok: true, message: 'hooks 已启用' };
+  return { ok: true, message: 'hooks 已启用（你自己挂在这些事件上的 hook 已保留）' };
 }
 
 function removeHooks(settingsPath = CB_SETTINGS) {
@@ -97,12 +128,18 @@ function removeHooks(settingsPath = CB_SETTINGS) {
     return { ok: false, message: `读取 ${settingsPath} 失败：${e.message}` };
   }
   if (!cfg.hooks) return { ok: true, message: '未安装' };
+  let removed = 0;
   for (const ev of HOOK_EVENTS) {
-    if (isOurHook(cfg, ev)) delete cfg.hooks[ev];
+    const before = cfg.hooks[ev] || [];
+    const kept = stripOurs(before);
+    if (kept.length === before.length) continue;      // 本脚本没注册过，不碰
+    removed += 1;
+    if (kept.length) cfg.hooks[ev] = kept; else delete cfg.hooks[ev];
   }
+  if (!removed) return { ok: true, message: '未安装' };
   if (!Object.keys(cfg.hooks).length) delete cfg.hooks;
   fs.writeFileSync(settingsPath, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
-  return { ok: true, message: 'hooks 已停用' };
+  return { ok: true, message: 'hooks 已停用（你自己挂在这些事件上的 hook 已保留）' };
 }
 
 // ── 路径与查询 ─────────────────────────────────────────────────────────────
@@ -148,8 +185,12 @@ function scriptPath() {
     path.join(home, '.claude', 'skills', 'qa-log', 'scripts', 'qa_query.py'),
     path.join(home, '.agents', 'skills', 'qa-log', 'scripts', 'qa_query.py'),
     path.join(home, '.codebuddy', 'skills', 'qa-log', 'scripts', 'qa_query.py'),
-    path.join(workspaceRoot(), 'scripts', 'qa_query.py'),
   ];
+  // 工作区内的 scripts/qa_query.py 只在「受信任工作区」才考虑：否则 clone 一个
+  // 仓库 + 点开侧边栏 = 执行仓库内任意 Python。
+  if (vscode.workspace.isTrusted !== false) {
+    candidates.push(path.join(workspaceRoot(), 'scripts', 'qa_query.py'));
+  }
   for (const c of candidates) {
     if (fs.existsSync(c)) {
       return c;
@@ -183,7 +224,11 @@ function pythonArgv(py = pythonCommand()) {
 /** 写进 settings.json / 终端的命令行串：路径加引号（可能含空格），`py -3` 这类带参数的保持原样。 */
 function pythonCmdForHook() {
   const py = pythonCommand();
-  return isPythonPath(py) ? `"${py}"` : py;
+  const safe = shellSafe(py);
+  if (safe === null) {
+    throw new Error(`qaLog.pythonPath 含非法字符，已拒绝拼接到命令：${py}`);
+  }
+  return isPythonPath(safe) ? `"${safe}"` : safe;
 }
 
 function query(action, extra = [], dbOverride = null) {
@@ -208,9 +253,17 @@ function query(action, extra = [], dbOverride = null) {
     let triedFallback = false;
     const run = (cmd, argv) => {
       const t0 = Date.now();
-      execFile(cmd, argv, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, windowsHide: true },
+      execFile(cmd, argv, {
+        encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout: 30000,
+      },
         (err, stdout, stderr) => {
-          if (err && err.code === 'ENOENT' && !triedFallback) {
+          if (err && err.code === 'ETIMEDOUT') {
+            diag(`TIMEOUT(${cmd}): ${action} 超过 30s，已终止`);
+            reject(new Error(`qa_query.py ${action} 超时（30s），已终止`));
+            return;
+          }
+          // 只有「裸命令」才回退：配置成路径时的 ENOENT 是用户写错了，不能悄悄换解释器
+          if (err && err.code === 'ENOENT' && !triedFallback && !isPythonPath(cmd)) {
             // python 不在 PATH 时回退 py -3（Windows 官方安装器）
             triedFallback = true;
             diag(`ENOENT: '${cmd}' 不可用，回退 'py -3'`);
@@ -222,7 +275,9 @@ function query(action, extra = [], dbOverride = null) {
             reject(new Error(`${err.message}${stderr ? `\n${stderr}` : ''}`));
             return;
           }
-          const line = String(stdout || '').trim().split(/\r?\n/).filter(Boolean).pop();
+          // 契约是「单行 JSON」：取最后一个以 { 开头的行，容忍 banner/Warning 噪声
+          const line = String(stdout || '').split(/\r?\n/).map((s) => s.trim())
+            .filter(Boolean).reverse().find((s) => s.startsWith('{')) || '';
           if (!line) {
             diag(`ERROR: 空输出(${cmd})${stderr ? ` | stderr: ${stderr.slice(0, 500)}` : ''}`);
             reject(new Error(`空输出${stderr ? `\n${stderr}` : ''}`));
@@ -254,7 +309,9 @@ function query(action, extra = [], dbOverride = null) {
 // ── 中间区域详情面板（复用同一面板，避免点开一堆积 tab） ─────────────────────
 
 /** CodeBuddy 会话本地存储根目录（会话原文 JSON） */
-const CB_HISTORY_ROOT = path.join(process.env.LOCALAPPDATA || '', 'CodeBuddyExtension', 'Data');
+const CB_HISTORY_ROOT = process.env.LOCALAPPDATA
+  ? path.join(process.env.LOCALAPPDATA, 'CodeBuddyExtension', 'Data')
+  : null;   // LOCALAPPDATA 缺失时必须是 null：path.join('', 'x') 是相对路径，会去扫工作区
 
 /** 在会话存储里定位 sessionId 对应的目录。
  * 同一 sessionId 可能有多份副本（不同窗口实例各写一份，新鲜度不同）：
@@ -264,7 +321,7 @@ function findTranscriptDir(sessionId, metaTranscript) {
   if (metaTranscript && fs.existsSync(metaTranscript)) {
     return path.dirname(metaTranscript);
   }
-  if (!sessionId) return null;
+  if (!sessionId || !CB_HISTORY_ROOT) return null;
   const candidates = [];
   try {
     for (const userDir of fs.readdirSync(CB_HISTORY_ROOT)) {
@@ -454,7 +511,12 @@ function showPanel(kind, title, html, onMessage) {
     panel = vscode.window.createWebviewPanel(`qaLog.${kind}`, title, {
       viewColumn: vscode.ViewColumn.Active,
       preserveFocus: false,
-    }, { enableScripts: true, localResourceRoots: [] });
+    }, {
+      enableScripts: true,
+      // 纵深防御：即便渲染层漏了协议过滤，也禁止 webview 执行 command: URI
+      enableCommandUris: false,
+      localResourceRoots: [],
+    });
     panel.onDidDispose(() => { delete panels[kind]; }, null, []);
     if (onMessage) {
       panel.webview.onDidReceiveMessage(onMessage, null, []);
@@ -476,41 +538,51 @@ function nonce() {
 
 // ── QA 详情写操作（更新/删除，JSON 走 stdin 规避命令行中文乱码） ────────────
 
-let qaDetailState = null;   // {entry}
-let refreshViews = () => {}; // activate 时注入（重渲染两个侧边栏视图）
+let qaDetailState = null;   // {entry}：当前打开的条目，用于保存前校验目标未被换掉
+let refreshViews = () => {}; // activate 时注入（重渲染三个侧边栏视图）
 
+/**
+ * 写操作（qa-update / qa-delete）：JSON 走 stdin 规避命令行中文乱码。
+ * 用异步 execFile —— execFileSync 会阻塞整个 extension host（视图/命令/其它扩展全部停摆），
+ * 而写路径含 ensure_schema DDL + memory_guard 全表扫描，随库增长可达秒级。
+ */
 function qaWrite(action, args, inputObj) {
-  const [pyCmd, ...pyPre] = pythonArgv();
   const argv = [scriptPath(), '--db', dbPath(), action, ...args];
-  const run = (cmd, argv2) => execFileSync(cmd, argv2, {
-    input: JSON.stringify(inputObj || {}), encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024, windowsHide: true,
-  });
-  let stdout;
-  try {
-    stdout = run(pyCmd, [...pyPre, ...argv]);
-  } catch (e) {
-    const so = String((e && e.stdout) || '');
-    if (e && e.code === 'ENOENT') {
-      // python 不在 PATH 时回退 py -3（Windows 官方安装器）
-      try {
-        stdout = run('py', ['-3', ...argv]);
-      } catch (e2) {
-        const so2 = String((e2 && e2.stdout) || '');
-        if (so2.trim()) stdout = so2;
-        else throw new Error(String((e2 && e2.message) || e2));
+  const payload = JSON.stringify(inputObj || {});
+  const run = (cmd, argv2) => new Promise((resolve, reject) => {
+    const child = execFile(cmd, argv2, {
+      encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout: 30000,
+    }, (err, stdout, stderr) => {
+      if (err) {
+        err.stdout = stdout; err.stderr = stderr;
+        reject(err);
+        return;
       }
-    } else if (so.trim()) {
-      stdout = so;
-    } else {
+      resolve(stdout);
+    });
+    // 必须显式关闭 stdin：qa_query 的 qa-update 会 sys.stdin.read()，
+    // 不 end() 的话子进程永远等不到 EOF。
+    child.stdin.end(payload, 'utf8');
+  });
+  const [pyCmd, ...pyPre] = pythonArgv();
+  return run(pyCmd, [...pyPre, ...argv])
+    .catch((e) => {
+      if (e && e.code === 'ENOENT' && !isPythonPath(pyCmd)) {
+        return run('py', ['-3', ...argv]);           // python 不在 PATH 时回退 py -3
+      }
+      const so = String((e && e.stdout) || '');
+      if (so.trim()) return Promise.resolve(so);     // 脚本以 ok:false 退出，stdout 里有原因
       throw new Error(String((e && e.message) || e));
-    }
-  }
-  const line = String(stdout || '').trim().split(/\r?\n/).filter(Boolean).pop();
-  let parsed;
-  try { parsed = JSON.parse(line); } catch (_) { throw new Error('JSON 解析失败: ' + (line || '').slice(0, 200)); }
-  if (!parsed.ok) throw new Error(parsed.error || 'unknown error');
-  return parsed.data;
+    })
+    .then((stdout) => {
+      const line = String(stdout || '').split(/\r?\n/).map((s) => s.trim())
+        .filter(Boolean).reverse().find((s) => s.startsWith('{')) || '';
+      let parsed;
+      try { parsed = JSON.parse(line); }
+      catch (_) { throw new Error('JSON 解析失败: ' + (line || '').slice(0, 200)); }
+      if (!parsed.ok) throw new Error(parsed.error || 'unknown error');
+      return parsed.data;
+    });
 }
 
 /** 打开工作区文件（QA「涉及文件」里的相对路径按工作区根 / qa.db 所在目录解析） */
@@ -555,16 +627,25 @@ function qaDetailMessage(msg) {
   }
   if (msg.type === 'save') {
     const d = msg.data || {};
-    try {
-      const res = qaWrite('qa-update', ['--qid', String(d.qid || '')], d);
-      qaDetailState = { entry: res.entry };
-      const panel = panels['qaDetail'];
-      if (panel) panel.webview.html = qaDetailHtml(res.entry, nonce(), MARKED_SRC);
-      vscode.window.setStatusBarMessage(`已保存 ${d.qid}`, 3000);
-      refreshViews();
-    } catch (e) {
-      vscode.window.showErrorMessage('QA Log 保存失败: ' + e.message);
+    // 目标必须是当前打开的条目：否则详情面板被换开后，旧面板的保存会写到新条目上
+    if (qaDetailState && qaDetailState.entry && d.qid
+        && qaDetailState.entry.qid !== d.qid) {
+      vscode.window.showErrorMessage(
+        `QA Log: 当前打开的是 ${qaDetailState.entry.qid}，与保存目标 ${d.qid} 不一致，已取消`);
+      return;
     }
+    void (async () => {
+      try {
+        const res = await qaWrite('qa-update', ['--qid', String(d.qid || '')], d);
+        qaDetailState = { entry: res.entry };
+        const panel = panels['qaDetail'];
+        if (panel) panel.webview.html = qaDetailHtml(res.entry, nonce(), MARKED_SRC);
+        vscode.window.setStatusBarMessage(`已保存 ${d.qid}`, 3000);
+        refreshViews();
+      } catch (e) {
+        vscode.window.showErrorMessage('QA Log 保存失败: ' + e.message);
+      }
+    })();
     return;
   }
   if (msg.type === 'delete') {
@@ -572,14 +653,16 @@ function qaDetailMessage(msg) {
     vscode.window.showInformationMessage(
       `确定删除 ${qid} 吗？此操作不可撤销。`, { modal: true }, '删除').then((pick) => {
       if (pick !== '删除') return;
-      try {
-        qaWrite('qa-delete', ['--qid', qid]);
-        vscode.window.setStatusBarMessage(`已删除 ${qid}`, 3000);
-        if (panels['qaDetail']) { try { panels['qaDetail'].dispose(); } catch (_) { /* 忽略 */ } }
-        refreshViews();
-      } catch (e) {
-        vscode.window.showErrorMessage('QA Log 删除失败: ' + e.message);
-      }
+      void (async () => {
+        try {
+          await qaWrite('qa-delete', ['--qid', qid]);
+          vscode.window.setStatusBarMessage(`已删除 ${qid}`, 3000);
+          if (panels['qaDetail']) { try { panels['qaDetail'].dispose(); } catch (_) { /* 忽略 */ } }
+          refreshViews();
+        } catch (e) {
+          vscode.window.showErrorMessage('QA Log 删除失败: ' + e.message);
+        }
+      })();
     });
   }
 }
@@ -624,9 +707,20 @@ class QaViewProvider {
     };
     diag(`QA 视图刷新: db=${diagInfo.db}`);
     try {
-      const data = await query('qa-list', []);
+      // 必须给 limit：qa-list 会带上 root_cause/solution/files 三个长文本列，
+      // 无上限时整库 JSON 可达数 MB，而列表渲染只用 qid/status/phenomenon/date/category。
+      const data = await query('qa-list', ['--limit', String(MAX_QA_ROWS)]);
+      // 数据没变就别重绘：webview.html 赋值 = 整页销毁重建，会清掉搜索词与滚动位置，
+      // 而 hook 每轮对话都写库 → 每次写库都重灌一次。
+      const fingerprint = JSON.stringify(data);
+      if (fingerprint === this.lastJson) {
+        diag('QA 视图数据未变化，跳过重绘');
+        return;
+      }
+      this.lastJson = fingerprint;
       this.view.webview.html = qaListHtml({ ...data, diag: diagInfo }, n);
     } catch (e) {
+      this.lastJson = null;
       this.view.webview.html = qaListHtml({ error: String(e.message || e), diag: diagInfo }, n);
     }
   }
@@ -750,6 +844,15 @@ class HealthViewProvider {
 
 function activate(context) {
   diag(`激活: workspace=${workspaceRoot()} db=${dbPath()} script=${scriptPath()}`);
+
+  // 纵深防御：package.json 已声明 untrustedWorkspaces.supported=false，
+  // 这里再挡一次——脚本解析结果落在工作区内时说明是仓库自带脚本，不可信。
+  if (!vscode.workspace.isTrusted && scriptPath().startsWith(workspaceRoot())) {
+    vscode.window.showErrorMessage(
+      'QA Log：当前工作区未受信任，已拒绝执行仓库内的 Python 脚本。请在受信任工作区中打开，或用 qaLog.scriptPath 指定 skill 的 scripts 目录。');
+    return;
+  }
+
   const qaProvider = new QaViewProvider(context);
   const logProvider = new LogViewProvider(context);
   const healthProvider = new HealthViewProvider(context);
@@ -758,13 +861,16 @@ function activate(context) {
   context.subscriptions.push(
     out,
     vscode.window.registerWebviewViewProvider('qaLog.qaView', qaProvider, {
-      webviewOptions: { retainContextWhenHidden: true },
+      webviewOptions: { enableScripts: true, localResourceRoots: [] },
+      retainContextWhenHidden: true,   // 顶层字段：写在 webviewOptions 里会被静默忽略
     }),
     vscode.window.registerWebviewViewProvider('qaLog.logView', logProvider, {
-      webviewOptions: { retainContextWhenHidden: true },
+      webviewOptions: { enableScripts: true, localResourceRoots: [] },
+      retainContextWhenHidden: true,
     }),
     vscode.window.registerWebviewViewProvider('qaLog.healthView', healthProvider, {
-      webviewOptions: { retainContextWhenHidden: true },
+      webviewOptions: { enableScripts: true, localResourceRoots: [] },
+      retainContextWhenHidden: true,
     }),
   );
 
@@ -775,8 +881,22 @@ function activate(context) {
       healthProvider.render();
     }),
     vscode.commands.registerCommand('qaLog.openHealthReport', () => {
+      const db = dbPath();
+      const script = scriptPath();
+      // 终端命令是拼串：配置值含引号/分隔符时必须拒绝，否则构成命令注入
+      if (shellSafe(db) === null || shellSafe(script) === null) {
+        vscode.window.showErrorMessage('QA Log: qaLog.dbPath / qaLog.scriptPath 含非法字符，已拒绝发送到终端');
+        return;
+      }
+      let py;
+      try {
+        py = pythonCmdForHook();
+      } catch (e) {
+        vscode.window.showErrorMessage('QA Log: ' + e.message);
+        return;
+      }
       const term = vscode.window.createTerminal({ name: 'QA 健康报告' });
-      term.sendText(`${pythonCmdForHook()} "${scriptPath()}" --db "${dbPath()}" health`);
+      term.sendText(`${py} "${script}" --db "${db}" health`);
       term.show(true);
     }),
     vscode.commands.registerCommand('qaLog.openDb', async () => {
@@ -804,21 +924,37 @@ function activate(context) {
   );
 
   // 监听 qa.db 变化自动刷新（hook 持续写入；防抖）
-  try {
+  // 监听器要跟随配置：改了 qaLog.dbPath 后必须重新绑定，否则自动刷新彻底失效。
+  let watcher = null;
+  const scheduleRefresh = () => {
+    qaProvider.render(); logProvider.render();
+  };
+  const bindWatcher = () => {
     const dbDir = path.dirname(dbPath());
-    if (fs.existsSync(dbDir)) {
-      let timer = null;
-      const watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(vscode.Uri.file(dbDir), 'qa.db*'));
-      const refresh = () => {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(() => { qaProvider.render(); logProvider.render(); }, 500);
-      };
-      watcher.onDidChange(refresh);
-      watcher.onDidCreate(refresh);
-      context.subscriptions.push(watcher);
-    }
-  } catch (_) { /* 忽略 */ }
+    if (!fs.existsSync(dbDir)) return null;
+    //只盯 qa.db 本身：'qa.db*' 还会匹配 -wal/-journal，翻倍触发次数
+    const w = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.file(dbDir), 'qa.db'));
+    let timer = null;
+    const refresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(scheduleRefresh, 500);
+    };
+    w.onDidChange(refresh);
+    w.onDidCreate(refresh);
+    return w;
+  };
+  try {
+    watcher = bindWatcher();
+    if (watcher) context.subscriptions.push(watcher);
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('qaLog')) return;
+      if (watcher) { watcher.dispose(); watcher = bindWatcher(); }
+      scheduleRefresh();
+    }));
+  } catch (e) {
+    diag(`watcher 绑定失败: ${e.message}`);
+  }
 
   // 首次激活：hooks 未安装时提示一键启用（每个安装只提示一次）
   const promptedKey = 'qaLog.hooksPrompted';
