@@ -150,6 +150,7 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 | `conflicts` | `--link` | **冲突检测**（P4）：现象相似但根因/方案分歧；`--link` 记录 contradicts 关系并标记 needs_review |
 | `next-id` | — | 打印下一个可用 ID |
 | `delete <ID>` | `-f/--force`, `--dry-run` | 删除单条（默认有确认提示）。`--force` 跳过确认；`--dry-run` 只显示不删 |
+| `migrate` | `--apply`, `--strict` | **旧库升级体检**：schema 齐备性 + qid 归一（`Q-1`/`Q-01` → 4 位）+ status 归一（非规范值 → 已解决待验证）。默认只报告，`--apply` 才落库；`--strict` 遇非规范 status 拒绝写入并 exit 3；status 归一会写 `qa_events` 留痕 |
 | `format` | — | 校验并报告 qa.db 条目结构问题 |
 
 > **`delete` 安全设计**：默认打印待删条目 + ID + 日期 + 类别 + 状态 + 标题，要求键入 `y` 确认。脚本/Python 调用请加 `-f` 跳过交互；不确定时用 `--dry-run` 预览。
@@ -229,6 +230,18 @@ cd <project-root> && python <skill-path>/scripts/qa_md_sync.py export
 迁移是向前兼容的，不需要人工介入。legacy 备份文件 `qa.db.pre-*.bak` 仍可保留以供回滚。
 
 > **手动迁移时机：** 仅在外部工具/手写 SQL 把 qid 改成 3 位后，下一次 `qa_tool.py <任意命令>` 调用会自动修回。
+
+> **旧库升级推荐流程（升级前先 `copy qa.db qa.db.bak`）：**
+> 1. `python scripts/setup_hooks.py --remove`（先停 hooks，避免迁移时并发写库）
+> 2. `python scripts/qa_tool.py summary`（任意命令即触发自动迁移）
+> 3. `python scripts/qa_tool.py migrate`（体检：看还有哪些短 qid / 非规范 status）
+> 4. `python scripts/qa_tool.py format`（复检结构与状态合法性）
+> 5. `python scripts/qa_tool.py migrate --apply`（确认后落库；status 结果带审计留痕）
+> 6. `python scripts/setup_hooks.py`（装回 hooks）
+
+> **两种异常会被自动迁移跳过并报警（需人工处理）：**
+> - qid 归一会撞唯一约束（如同时存在 `Q-1` 与 `Q-00001`）—— 盲改会把两条合并或让库打不开，故只报警不改写
+> - 非规范 status（如 `已解决`）—— 状态机不擅自升级，只由 `migrate` 显式映射
 
 ## 技能组织说明
 
