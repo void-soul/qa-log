@@ -360,6 +360,83 @@ def cmd_conflicts(args):
     print(chr(10) + "[conflicts] recorded {} contradicts link(s); both sides need review".format(n))
     conn.close()
 
+def _migrate_scan(conn):
+    """扫描旧库问题，返回 (缺失schema, qid 问题, status 问题)。"""
+    from db import TARGET_DDL
+    missing = []
+    have = {r[1] for r in conn.execute("PRAGMA table_info(qa_entries)").fetchall()}
+    import re as _re
+    want = _re.findall(r"^\s{4}([a-z_]+)\s+(?:TEXT|INTEGER)", TARGET_DDL, _re.M)
+    for c in want:
+        if c not in have:
+            missing.append("column " + c)
+    for tb in ("agent_log", "qa_events", "qa_links"):
+        if not conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (tb,)).fetchone():
+            missing.append("table " + tb)
+    qid_issues, seen = [], {}
+    for r in conn.execute("SELECT qid FROM qa_entries WHERE substr(qid,1,2) = 'Q-' AND length(qid) != 6").fetchall():
+        old = r[0]
+        new = "Q-%04d" % int(old[2:])
+        dup = conn.execute("SELECT 1 FROM qa_entries WHERE qid = ?", (new,)).fetchone()
+        why = "目标已存在" if dup else ("库内多行归一到同一 qid" if new in seen else "")
+        seen[new] = True
+        qid_issues.append((old, new, why))
+    st_issues = []
+    for r in conn.execute("SELECT qid, status FROM qa_entries").fetchall():
+        if r[1] not in VALID_STATUSES:
+            st_issues.append((r[0], r[1], "已解决待验证"))
+    return missing, qid_issues, st_issues
+
+def cmd_migrate(args):
+    """旧库升级体检与修复（默认只报告，--apply 才落库）。
+
+    1. schema：确认 19 列 + agent_log/qa_events/qa_links 齐备（ensure_schema 自动补）
+    2. qid：Q-1 / Q-01 / Q-001 等非 4 位归一为 4 位（会撞唯一约束时只报告不改写）
+    3. status：「已解决」这类非规范值映射为规范状态（--strict 下拒绝并 exit 3）
+    """
+    conn = connect(args.db)
+    missing, qids, sts = _migrate_scan(conn)
+    fixed = []
+    if missing:
+        print("[migrate] schema 缺失（ensure_schema 已自动补齐，仅告知）:")
+        for k in missing:
+            print("  - " + k)
+    if qids:
+        print("[migrate] qid （非 4 位） %d 条" % len(qids))
+        for old, new, why in qids:
+            print("  - %s -> %s" % (old, new) + (" " + FL + why + FR if why else ""))
+        if args.apply and not any(w for _, _, w in qids):
+            n = conn.execute(
+                "UPDATE qa_entries SET qid = printf('Q-%04d', CAST(SUBSTR(qid,3) AS INTEGER)) "
+                "WHERE substr(qid,1,2) = 'Q-' AND length(qid) != 6"
+            ).rowcount
+            conn.commit()
+            fixed.append("qid 归一 %d 条" % n)
+        elif args.apply:
+            print("[migrate] ! 有 qid 归一后会撞唯一约束，已跳过（见上方原因），需人工处理")
+    if sts:
+        print("[migrate] 非规范 status：%d 条" % len(sts))
+        for qid, old, new in sts:
+            print("  - %s: %s -> %s" % (qid, old, new))
+        if args.strict:
+            print("[migrate] --strict：存在非规范 status，拒绝写入。", file=sys.stderr)
+            conn.close()
+            sys.exit(3)
+        if args.apply:
+            for qid, old, new in sts:
+                conn.execute("UPDATE qa_entries SET status = ? WHERE qid = ?", (new, qid))
+                log_event(conn, qid, 'migrate','status %s -> %s' % (old, new))
+            conn.commit()
+            fixed.append("status 归一 %d 条" % len(sts))
+    if not (missing or qids or sts):
+        print("[migrate] 一切正常：schema 齐备、qid 均 4 位、status 均规范。")
+    elif not args.apply:
+        print("[dry-run] 未做任何改动。加 --apply 执行；status 保守映射为「已解决待验证」。")
+    elif fixed:
+        print("[migrate] 已修复：" + "、".join(fixed))
+    conn.close()
+
 def cmd_summary(args):
     """List all entries: ID + title only."""
     conn = connect(args.db)
@@ -911,6 +988,9 @@ def main():
     p_update.add_argument("--json", nargs="?", const="__STDIN__", default=None,
                           help="JSON object as string, or bare --json to read from stdin. PREFERRED for Chinese.")
 
+    p_mig = sub.add_parser("migrate", help="体检/修复旧库 schema、qid 归一、status 归一（默认 dry-run）")
+    p_mig.add_argument("--apply", action="store_true", help="真正落库（默认只报告）")
+    p_mig.add_argument("--strict", action="store_true", help="存在非规范 status 时拒绝执行并 exit 3")
     p_next = sub.add_parser("next-id", help="Print next available ID")
     sub.add_parser("format", help="Validate qa.db structure")
 
@@ -962,6 +1042,7 @@ def main():
         "next-id": cmd_next_id,
         "delete": cmd_delete,
         "format": cmd_format,
+        "migrate": cmd_migrate,
         "health": cmd_health,
         "prune": cmd_prune,
         "conflicts": cmd_conflicts,
