@@ -217,12 +217,29 @@ fn open_db(app: &AppHandle) -> Result<Connection, String> {
         }
     }
 
-    // 4. 3 位 qid（Q-53）补零成 4 位（Q-0053），与 db.py::ensure_schema 步骤 4 一致。
-    //    不补零时 GUI 的数值排序与 Python 侧会分叉，且外部写入的 3 位条目永远查不到。
-    let _ = conn.execute(
-        "UPDATE qa_entries SET qid = 'Q-0' || substr(qid, 3) WHERE length(qid) = 5",
-        [],
-    );
+    // 4. qid normalization, same rule as db.py::ensure_schema step 4: printf by numeric
+    //    value so Q-1 / Q-01 / Q-001 / Q-00001 all become 4-digit. The old code only
+    //    rescued length=5 (3-digit Q-123), so shorter legacy ids were never fixed.
+    //    Clash pre-check: if two legacy spellings map to the same qid, a plain UPDATE
+    //    would violate the primary key and make the window unusable -- warn only.
+    let clash: i64 = conn
+        .query_row(
+            "WITH cand AS (SELECT qid, printf('Q-%04d', CAST(SUBSTR(qid,3) AS INTEGER)) AS new_qid FROM qa_entries WHERE substr(qid,1,2) = 'Q-' AND length(qid) != 6) SELECT COUNT(*) FROM cand WHERE new_qid IN (SELECT qid FROM qa_entries) OR new_qid IN (SELECT new_qid FROM cand GROUP BY new_qid HAVING COUNT(*) > 1)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if clash > 0 {
+        eprintln!(
+            "[qa-log] qid normalization skipped: {} qid(s) would collide (e.g. Q-1 vs Q-00001)",
+            clash
+        );
+    } else {
+        let _ = conn.execute(
+            "UPDATE qa_entries SET qid = printf('Q-%04d', CAST(SUBSTR(qid,3) AS INTEGER)) WHERE substr(qid,1,2) = 'Q-' AND length(qid) != 6",
+            [],
+        );
+    }
 
     Ok(conn)
 }

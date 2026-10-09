@@ -240,30 +240,52 @@ def ensure_schema(conn, verbose=False):
         try:
             # 注意：sqlite3 的 executescript() 会先隐式 COMMIT 掉挂起事务，
             # 所以 BEGIN/COMMIT 必须写在脚本体内，不能用 conn.execute("BEGIN")。
+            # 重建前先把缺失的记忆列补到旧表上（ALTER ADD COLUMN 对已有行填默认值），
+            # 这样下面这条静态 19 列 COPY 就能把 importance/access_count/archived/tags
+            # 等真实值一并搬过去 —— 早期 P2 版本跑过的库不会因重建而归零。
+            _pre = [('updated_at', 'ALTER TABLE qa_entries ADD COLUMN updated_at TEXT')]
+            _pre += MEMORY_COLUMNS
+            for _c, _ddl in _pre:
+                if not _has_column(conn, _c):
+                    conn.execute(_ddl)
             conn.executescript(
-                """
-                BEGIN IMMEDIATE;
-                CREATE TABLE IF NOT EXISTS qa_entries_new (
-                    qid        TEXT PRIMARY KEY,
-                    date       TEXT NOT NULL,
-                    category   TEXT NOT NULL,
-                    status     TEXT NOT NULL DEFAULT 'Pending',
-                    phenomenon TEXT NOT NULL,
-                    root_cause TEXT DEFAULT '',
-                    solution   TEXT DEFAULT '',
-                    files      TEXT DEFAULT '',
-                    created_at TEXT DEFAULT (datetime('now','localtime'))
-                );
-                INSERT INTO qa_entries_new
-                    (qid, date, category, status, phenomenon, root_cause, solution, files, created_at)
-                SELECT qid, date, category, status, phenomenon,
-                       COALESCE(root_cause, ''), COALESCE(solution, ''), COALESCE(files, ''),
-                       COALESCE(created_at, datetime('now','localtime'))
-                FROM qa_entries;
-                DROP TABLE qa_entries;
-                ALTER TABLE qa_entries_new RENAME TO qa_entries;
-                COMMIT;
-                """
+                "BEGIN IMMEDIATE;"
+                "DROP TABLE IF EXISTS qa_entries_new;"
+                "CREATE TABLE IF NOT EXISTS qa_entries_new ("
+                "    qid        TEXT PRIMARY KEY,"
+                "    date       TEXT NOT NULL,"
+                "    category   TEXT NOT NULL,"
+                "    status     TEXT NOT NULL DEFAULT 'Pending',"
+                "    phenomenon TEXT NOT NULL,"
+                "    root_cause TEXT DEFAULT '',"
+                "    solution   TEXT DEFAULT '',"
+                "    files      TEXT DEFAULT '',"
+                "    created_at TEXT DEFAULT (datetime('now','localtime')),"
+                "    updated_at TEXT,"
+                "    parent_qid TEXT,"
+                "    importance INTEGER DEFAULT 50,"
+                "    access_count INTEGER DEFAULT 0,"
+                "    last_access_at TEXT,"
+                "    tags TEXT DEFAULT '[]',"
+                "    source_session TEXT,"
+                "    source_commit TEXT,"
+                "    archived INTEGER DEFAULT 0,"
+                "    needs_review INTEGER DEFAULT 0"
+                ");"
+                "INSERT INTO qa_entries_new (qid, date, category, status, phenomenon,"
+                "       root_cause, solution, files, created_at, updated_at, parent_qid,"
+                "       importance, access_count, last_access_at, tags, source_session,"
+                "       source_commit, archived, needs_review)"
+                "SELECT qid, date, category, status, phenomenon,"
+                "       COALESCE(root_cause, ''), COALESCE(solution, ''), COALESCE(files, ''),"
+                "       COALESCE(created_at, datetime('now','localtime')), updated_at, parent_qid,"
+                "       COALESCE(importance, 50), COALESCE(access_count, 0), last_access_at,"
+                "       COALESCE(tags, '[]'), source_session, source_commit,"
+                "       COALESCE(archived, 0), COALESCE(needs_review, 0)"
+                "FROM qa_entries;"
+                "DROP TABLE qa_entries;"
+                "ALTER TABLE qa_entries_new RENAME TO qa_entries;"
+                "COMMIT;"
             )
         except sqlite3.Error:
             try:
@@ -291,11 +313,24 @@ def ensure_schema(conn, verbose=False):
                 print(f"[ensure_schema] Added column {col}")
             changed = True
 
-    # 4. auto-pad 3-digit qids to 4-digit
-    cur = conn.execute(
-        "UPDATE qa_entries SET qid = 'Q-0' || substr(qid, 3) WHERE length(qid) = 5"
-    )
-    if cur.rowcount > 0:
+    # 4. qid 归一化：任何不是 4 位的 qid（Q-1 / Q-01 / Q-001 / Q-00001）都补成 4 位。
+    #    旧实现是 length(qid)=5，只能救 Q-123 这类 3 位；Q-1 这种 2 位永远不会被补，
+    #    导致 next-id 分配与排序错位、get 1 查不到。printf 按数值补，位数不足自动加前导零。
+    #
+    #    先做冲突预检：若两个旧写法会归一到同一个 qid（如 Q-1 与 Q-00001 并存），直接
+    #    UPDATE 会撞唯一约束，把库变成「所有命令都打不开」——比不迁移更糟。这种情况
+    #    只报告不改写，交人工逐条处理。
+    _clash = conn.execute("WITH cand AS (SELECT qid AS old_qid, printf('Q-%04d', CAST(SUBSTR(qid,3) AS INTEGER)) AS new_qid FROM qa_entries WHERE substr(qid,1,2) = 'Q-' AND length(qid) != 6) SELECT COUNT(*) FROM cand WHERE new_qid IN (SELECT qid FROM qa_entries) OR new_qid IN (SELECT new_qid FROM cand GROUP BY new_qid HAVING COUNT(*) > 1)").fetchone()[0]
+    if _clash:
+        print("[ensure_schema] qid 归一化已跳过：%d 个 qid 归一后会撞唯一约束" % _clash
+              + "（例如同时存在 Q-1 与 Q-00001）。请用 qa_tool.py migrate 逐条处理。",
+              file=sys.stderr)
+    else:
+        cur = conn.execute("UPDATE qa_entries SET qid = printf('Q-%04d', CAST(SUBSTR(qid,3) AS INTEGER)) WHERE substr(qid,1,2) = 'Q-' AND length(qid) != 6")
+        if cur.rowcount > 0:
+            changed = True
+            if verbose:
+                print("[ensure_schema] Normalized %d qid(s) to 4-digit" % cur.rowcount)
         if verbose:
             print(f"[ensure_schema] Padded {cur.rowcount} qid(s) from 3-digit to 4-digit")
         changed = True
