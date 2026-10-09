@@ -172,6 +172,25 @@ function dbPath() {
   return path.join(workspaceRoot(), 'qa.db');
 }
 
+/** 扩展依赖的 qa_query 动作：候选脚本必须全部支持，否则视为旧版不可用。 */
+const REQUIRED_ACTIONS = ["health", "recall", "qa-list"];
+
+/** 轻量校验：读脚本源码，确认 ACTIONS 字典里包含所有需要的 action（带缓存）。 */
+const _scriptSupportCache = new Map();
+function scriptSupports(file, actions) {
+  const st = fs.statSync(file);
+  const key = file + '|' + st.mtimeMs + '|' + st.size;
+  if (_scriptSupportCache.has(key)) return _scriptSupportCache.get(key);
+  let src = '';
+  try {
+    src = fs.readFileSync(file, 'utf8');
+  } catch (_) {
+    return false;
+  }
+  const ok = actions.every((a) => src.indexOf('"' + a + '": act_') >= 0);
+  _scriptSupportCache.set(key, ok);
+  return ok;
+}
 function scriptPath() {
   const cfg = vscode.workspace.getConfiguration('qaLog');
   const explicit = (cfg.get('scriptPath') || '').trim();
@@ -191,8 +210,19 @@ function scriptPath() {
   if (vscode.workspace.isTrusted !== false) {
     candidates.push(path.join(workspaceRoot(), 'scripts', 'qa_query.py'));
   }
+  // 存在还不够：安装副本可能是旧版（实测 ~/.claude/skills 那份落后 9 个提交，
+  // 没有 health / recall），直接拿去用会报 invalid choice。故校验候选脚本确实
+  // 声明了需要的 action，不满足就继续找下一个。
+  const wanted = REQUIRED_ACTIONS;
+  for (const c of candidates) {
+    if (fs.existsSync(c) && scriptSupports(c, wanted)) {
+      return c;
+    }
+  }
+  // 全都缺 action：退回第一个存在的候选，让 query() 给出可诊断的错误
   for (const c of candidates) {
     if (fs.existsSync(c)) {
+      diag('WARNING: ' + c + ' 缺少 action: ' + wanted.join(','));
       return c;
     }
   }
