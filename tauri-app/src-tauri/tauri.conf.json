@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "identifier": "com.qalog.browser",
   "build": {
+    "beforeDevCommand": "npm run build:dist",
+    "beforeBuildCommand": "npm run build:dist",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"
   },

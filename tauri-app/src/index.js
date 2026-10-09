@@ -15,8 +15,13 @@ async function loadEntries() {
     renderList()
   } catch (e) {
     console.error('Failed to load entries:', e)
-    document.getElementById('entryList').innerHTML = 
-      '<div class="detail-empty">加载失败: ' + e + '</div>'
+    // 错误信息走 textContent，不进 innerHTML：Rust 侧的错误可能带路径等内容
+    const box = document.getElementById('entryList')
+    box.textContent = ''
+    const div = document.createElement('div')
+    div.className = 'detail-empty'
+    div.textContent = '加载失败: ' + e
+    box.appendChild(div)
   }
 }
 
@@ -41,6 +46,14 @@ function escapeAttr(text) {
 // ---------- Markdown 渲染 ----------
 // 用浏览器原生 DOM 做 HTML 转义（防 XSS），再交给 marked.parse 处理。
 // 优点：用户在文本里随手写的 <script> 不会执行；表格/列表/代码块会正确渲染。
+// 注意：escapeHtml 不处理 URL 协议，marked 的 cleanUrl 也只 encodeURI，
+// 所以渲染后必须再做一次协议白名单（javascript:/file:/data: 一律降级为纯文本）。
+const SAFE_SCHEME_RE = /^(https?:|mailto:|#|\/)/i
+function safeHref(href) {
+  const v = String(href || '').trim()
+  return SAFE_SCHEME_RE.test(v) ? v : null
+}
+
 function renderMd(text) {
   const raw = (text == null ? '' : String(text))
   const trimmed = raw.trim()
@@ -53,8 +66,13 @@ function renderMd(text) {
   }
   try {
     const html = window.marked.parse(escapeHtml(raw), { breaks: true, gfm: true })
-    // 给所有链接加 target=_blank，避免内嵌网页可能不可点击
-    return html.replace(/<a\s+href=/g, '<a target="_blank" rel="noopener noreferrer" href=')
+    // 只给安全协议的链接加 target=_blank；不安全协议直接去掉 href（不可点击）
+    return html.replace(/<a\s+href="([^"]*)"/gi, (m, href) => {
+      const safe = safeHref(href)
+      return safe === null
+        ? '<a>'
+        : '<a target="_blank" rel="noopener noreferrer" href="' + safe + '"'
+    })
   } catch (e) {
     return `<p>${escapeHtml(raw)}</p>`
   }
@@ -64,13 +82,14 @@ function renderDetail(entry) {
   return `
     <div class="card">
       <div class="card-header">
-        <div class="qid">${escapeHtml(entry.qid)}</div>
+        <div class="qid">${escapeHtml(entry.qid)}${entry.archived ? ' <span class="badge">已归档</span>' : ''}</div>
         <div class="meta">
           <span>${escapeHtml(entry.date)}</span>
           <span>${escapeHtml(entry.category)}</span>
           <span class="badge badge-${getStatusClass(entry.status)}">${escapeHtml(entry.status)}</span>
         </div>
         <div class="card-actions">
+          ${entry.archived ? '<button class="btn" onclick="unarchiveEntry(\'' + escapeAttr(entry.qid) + '\')">取消归档</button>' : ''}
           <button class="btn btn-edit" onclick="openEditModal('${escapeAttr(entry.qid)}')">编辑</button>
           <button class="btn btn-delete" onclick="deleteEntry('${escapeAttr(entry.qid)}')">删除</button>
         </div>
@@ -107,8 +126,8 @@ function renderList() {
   }
   
   list.innerHTML = filteredEntries.map((e, i) => `
-    <div class="entry-item ${i === 0 ? 'active' : ''}" onclick="selectEntry('${escapeAttr(e.qid)}')" data-qid="${escapeAttr(e.qid)}">
-      <div class="qid">${escapeHtml(e.qid)}</div>
+    <div class="entry-item ${i === 0 ? 'active' : ''} ${e.archived ? 'archived' : ''}" onclick="selectEntry('${escapeAttr(e.qid)}')" data-qid="${escapeAttr(e.qid)}">
+      <div class="qid">${escapeHtml(e.qid)}${e.archived ? ' <span class="badge">已归档</span>' : ''}</div>
       <div class="qtitle">${escapeHtml(e.phenomenon || '')}</div>
       <div class="qmeta">
         <span>${escapeHtml(e.date)}</span>
@@ -131,6 +150,13 @@ function selectEntry(qid) {
   }
 }
 
+// 搜索框每敲一键都会触发：加 200ms 防抖，避免长库下每键全量重建 DOM
+let _searchTimer = null
+function onSearchInput() {
+  if (_searchTimer) clearTimeout(_searchTimer)
+  _searchTimer = setTimeout(filter, 200)
+}
+
 function filter() {
   const query = document.getElementById('search').value.toLowerCase()
   const status = document.getElementById('statusFilter').value
@@ -151,6 +177,18 @@ function refresh() {
   loadEntries()
 }
 
+// ---------- 归档 / 恢复 ----------
+// prune 只置 archived=1、永不删除（承诺「可恢复」），GUI 必须提供恢复入口，
+// 否则用户只能回命令行 --restore。
+async function unarchiveEntry(qid) {
+  try {
+    await invoke('unarchive_entry', { qid })
+    await loadEntries()
+  } catch (e) {
+    alert('取消归档失败: ' + e)
+  }
+}
+
 // ---------- 编辑 ----------
 let editingQid = null
 
@@ -160,7 +198,14 @@ function openEditModal(qid) {
   editingQid = qid
   document.getElementById('editQid').value = entry.qid
   document.getElementById('editDate').value = entry.date
-  document.getElementById('editCategory').value = entry.category
+  const cat = document.getElementById('editCategory')
+  if (!Array.from(cat.options).some(o => o.value === entry.category)) {
+    // 库里存在未知类别（如历史值 Pattern）：补进下拉，绝不因 .value='' 而被清空
+    const opt = document.createElement('option')
+    opt.textContent = entry.category
+    cat.appendChild(opt)
+  }
+  cat.value = entry.category
   document.getElementById('editStatus').value = entry.status
   document.getElementById('editPhenomenon').value = entry.phenomenon || ''
   document.getElementById('editRootCause').value = entry.root_cause || ''
@@ -177,7 +222,7 @@ function closeEditModal() {
 async function saveEdit() {
   if (editingQid === null) return
   const payload = {
-    qid: document.getElementById('editQid').value.trim(),
+    qid: editingQid,   // 定位键取自打开弹窗时的快照，不信任 DOM 里的可编辑输入
     category: document.getElementById('editCategory').value,
     status: document.getElementById('editStatus').value,
     phenomenon: document.getElementById('editPhenomenon').value,

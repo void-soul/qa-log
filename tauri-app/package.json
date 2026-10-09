@@ -4,6 +4,7 @@
   "description": "QA Log Browser - Desktop GUI for QA records",
   "license": "Apache-2.0",
   "scripts": {
+    "build:dist": "node -e \"const f=require('fs');f.rmSync('dist',{recursive:true,force:true});f.mkdirSync('dist');f.cpSync('index.html','dist/index.html');f.cpSync('src','dist/src',{recursive:true});f.cpSync('vendor','dist/vendor',{recursive:true});\"",
     "tauri": "tauri"
   },
   "devDependencies": {

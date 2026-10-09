@@ -19,9 +19,9 @@ icon = [
 # Tauri v2.11 需要 tauri-build >= 2.11，但 crates.io 最新只到 2.6.3
 # 当前 Cargo.lock 已锁定 tauri 2.11.5 + tauri-build 2.6.3，可正常编译
 tauri = { version = "2.6", features = [] }
-tauri-plugin-shell = "2"
+# 不引入 tauri-plugin-shell：前端零引用，未使用的授权只是攻击面
+# （capabilities 里的 shell:allow-open 已同步移除）
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 
 [build-dependencies]

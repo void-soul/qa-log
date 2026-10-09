@@ -33,6 +33,9 @@
     .entry-item { padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
     .entry-item:hover { background: rgba(88,166,255,0.08); }
     .entry-item.active { background: rgba(88,166,255,0.15); border-left: 3px solid var(--accent); }
+    /* 已归档（prune 只置位、永不删除）：灰显 + 删除线，让用户能分辨哪些条目已退出默认召回 */
+    .entry-item.archived { opacity: 0.55; }
+    .entry-item.archived .qtitle { text-decoration: line-through; }
     .qid { font-weight: 600; font-size: 13px; color: var(--accent); }
     .qtitle { font-size: 12px; color: var(--fg-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .qmeta { font-size: 11px; color: var(--fg-muted); margin-top: 4px; display: flex; gap: 8px; }
@@ -118,7 +121,7 @@
     <div class="header">
       <h1>QA Log</h1>
       <div class="controls">
-        <div class="search-wrap"><input type="text" id="search" placeholder="搜索..." oninput="filter()"></div>
+        <div class="search-wrap"><input type="text" id="search" placeholder="搜索..." oninput="onSearchInput()"></div>
         <select id="statusFilter" onchange="filter()"><option value="">全部状态</option><option value="Pending">待解决</option><option value="已解决待验证">已解决待验证</option><option value="已验证">已验证</option><option value="WontFix">暂不修复</option><option value="Unresolved">未解决</option></select>
         <button onclick="refresh()">刷新</button>
       </div>
@@ -146,7 +149,7 @@
         <div class="form-grid">
           <div class="form-row">
             <label>QID</label>
-            <input type="text" id="editQid">
+            <input type="text" id="editQid" disabled>
           </div>
           <div class="form-row">
             <label>日期</label>
@@ -155,9 +158,12 @@
           <div class="form-row">
             <label>类别</label>
             <select id="editCategory">
-              <option>Bug Fix</option><option>Feature</option><option>Architecture</option>
-              <option>Refactoring</option><option>Performance</option><option>Config/Setup</option>
-              <option>Understanding</option><option>Other</option>
+              <!-- 枚举必须与 SKILL.md「数据模型」一节逐字一致；改这里就要改那里。
+                   拼写不一致（如 Refactoring vs Refactor）会让 select.value 变成 ""，
+                   保存时把 category 静默清空。 -->
+              <option>Bug Fix</option><option>Feature</option><option>Refactor</option>
+              <option>Performance</option><option>Documentation</option><option>Architecture</option>
+              <option>Style</option><option>Build</option><option>Test</option><option>Other</option>
             </select>
           </div>
           <div class="form-row">
