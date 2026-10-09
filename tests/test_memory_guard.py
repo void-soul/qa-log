@@ -193,3 +193,9 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+# ── 标准 runner 接入（pytest / python -m unittest discover）───────────────────
+# 断言写在 main() 里；不加这段的话标准 runner 会报 "Ran 0 tests ... OK"（假绿）。
+from _harness import make_script_test_case  # noqa: E402
+
+TestChecks = make_script_test_case(__name__)

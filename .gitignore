@@ -5,6 +5,9 @@ target
 __pycache__
 dist
 
+# 测试/调试残留
+*.log
+
 # QA log 数据（用户私有，禁止入库）
 qa.db
 *.bak
