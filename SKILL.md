@@ -47,9 +47,16 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 │   └── QALogBrowser.exe                 # Tauri 桌面浏览器（由 setup 复制到项目根）
 ├── scripts/
 │   ├── db.py                            # 共享 DB 逻辑：connect/ensure_schema（自动迁移 + 4 位零填充）
-│   ├── qa_tool.py                       # 主 CLI：增/改/查/格式化/删除
-│   ├── search_qa.py                     # 关键词搜索 CLI
+│   ├── stdin_io.py                      # 带超时的 stdin 读取（宿主 PIPE 不关闭时不会挂死）
+│   ├── qa_tool.py                       # 主 CLI：增/改/查/格式化/删除（append/update 过闸门）
+│   ├── memory_guard.py                  # ★ 写入闸门：reject/warn/ok 三档 + 重复/拆分启发式
+│   ├── memory_recall.py                 # ★ 加权召回与巩固（recall/consolidate 的实现）
+│   ├── memory_health.py                 # ★ 衰减归档 / 冲突检测 / 健康报告（health/prune/conflicts）
+│   ├── qa_query.py                      # JSON 查询接口（VS Code 插件唯一数据通道，输出单行 JSON）
 │   ├── qa_md_sync.py                    # QA.md ⇄ qa.db 增量合并
+│   ├── agent_log_hook.py                # CodeBuddy hook：会话消息自动写入 agent_log
+│   ├── setup_hooks.py                   # 一键安装/卸载上述 hook（改~/.codebuddy/settings.json）
+│   ├── search_qa.py                     # 关键词搜索 CLI（薄封装 memory_recall）
 │   └── gen_commit_msg.py                # 生成带 #Q-XXXX 追溯标记的 commit message
 ├── skills/                              # 7 个子技能（按需加载）
 │   ├── add-question.md                  # Phase 1: 记录问题
@@ -101,6 +108,8 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 
 **QA.md ⇄ qa.db 增量合并：** 加载 `qa-log/skills/md-sync` 技能，把 QA.md 改动增量合并进 qa.db（或反向导出）
 
+**记忆系统运维：** 加载 `qa-log/skills/memory-ops` 技能，覆盖 `recall`（加权召回）/ `consolidate`（去重 + 模式提炼）/ `health`（健康报告）/ `prune`（衰减归档）/ `conflicts`（冲突检测）——五条命令**默认全是 dry-run**，`--apply` 才落库，归档永不删除
+
 ## 何时跳过
 
 - 非编程问题
@@ -118,6 +127,7 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 || `qa-log/skills/search` | 搜索历史QA条目 |
 || `qa-log/skills/batch-commit` | 分批次提交代码 |
 || `qa-log/skills/md-sync` | 增量合并 QA.md → qa.db |
+|| `qa-log/skills/memory-ops` | 记忆运维：recall / consolidate / health / prune / conflicts |
 
 ## CLI 参考（scripts/qa_tool.py）
 
@@ -127,9 +137,9 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 |--------|------|------|
 | `setup` | — | 首次使用：建 `qa.db` + 复制 `QALogBrowser.exe` 到项目根目录 |
 | `summary` | `-n/--limit` | 列出所有条目（ID + 标题）。`-n N` 只显示前 N 条（按 qid DESC）|
-| `get <ID>` | `ID`（如 `Q-0003` 或 `3`） | 查看单条完整内容 |
+| `get <ID>` | `ID`（如 `Q-0003` 或 `3`） | 查看单条完整内容。**ID 会统一归一化**：`3` / `Q-3` / `q-3` 都解析为 `Q-0003`；非法输入（如 `Q`、`abc`）直接报错退出（exit 2），绝不静默落到 `Q-0001` |
 | `append` | `--json`（推荐）, `-c/--category`, `-q/--question` | 新增条目（ID 自动递增，状态默认 Pending） |
-| `update <ID>` | `--json`（推荐）, `-q/--question`, `-s/--status`, `-r/--root-cause`, `-a/--answer`, `-f/--files`, `--force` | 更新已有条目（自动写 `updated_at`）。默认过**写入闸门**，reject 时 exit 3；`--force` 放行 |
+| `update <ID>` | `--json`（推荐）, `-q/--question`, `-s/--status`, `-r/--root-cause`, `-a/--answer`, `-f/--files`, `--force` | 更新已有条目（自动写 `updated_at`）。默认过**写入闸门**，reject 时 exit 3；`--force` 放行。status 只接受 5 个规范值，非法值 exit 2 |
 | `guard [ID]` | `--json` | 干跑写入闸门（不落库）：检查 JSON 草稿或库中条目。exit 0=ok / 1=warn / 3=reject |
 | `split <ID>` | `--apply`, `--yes` | 拆分"一条多诉求"的条目：默认只打印草案，`--apply` 建子条目（写 `parent_qid` + `derived_from` 关系） |
 | `history <ID>` | — | 打印该条记忆的**审计流水**（`qa_events`：append/update/verify/split/delete…）与关系（`qa_links`）；条目已删除也能查到 |
