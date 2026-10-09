@@ -19,7 +19,7 @@ import sys
 
 # 共享 DB 逻辑（自动迁移 + 4 位零填充）
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from db import DB_NAME, connect, log_event
+from db import DB_NAME, connect, log_event, normalize_id
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -177,7 +177,17 @@ def cmd_sync(md_path, db_path, strict=False):
             conn=conn, exclude_qid=e["qid"])
 
     added = updated = skipped = 0
+    bad_qid = 0
     for e in entries:
+        # qid 必须归一化：QA.md 里手写的 Q-53 要落到 Q-0053，否则会插入一条
+        # 内容相同、qid 不同的重复条目（ensure_schema 只补 length=5，补不了 length=4）。
+        try:
+            e["qid"] = normalize_id(e["qid"])
+        except ValueError as exc:
+            print("[skip] %s（qid 非法）" % (e.get("qid"),), file=sys.stderr)
+            print("       %s" % exc, file=sys.stderr)
+            bad_qid += 1
+            continue
         row = conn.execute("SELECT * FROM qa_entries WHERE qid=?", (e["qid"],)).fetchone()
         vals = entry_to_row(e)
         g = _guard_check(e, vals)
@@ -222,7 +232,8 @@ def cmd_sync(md_path, db_path, strict=False):
 
     print(f"Sync {md_path} -> {db_path}: "
           f"{added} added, {updated} updated, {skipped} unchanged "
-          f"({len(entries)} parsed; {total} in db)")
+          f"({len(entries)} parsed; {total} in db)"
+          + (f"; {bad_qid} skipped (非法 qid)" if bad_qid else ""))
     if guard_report:
         n_rej = sum(1 for _, g in guard_report if g["level"] == "reject")
         print(f"[guard] 记忆闸门：{len(guard_report)} 条不合规"

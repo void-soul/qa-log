@@ -18,9 +18,10 @@
   qa_entries 新增列：parent_qid / importance / access_count / last_access_at /
                tags / source_session / source_commit / archived
 
-迁移覆盖范围（与 Tauri 后端 open_db() 一致）：
+迁移覆盖范围（本文件是唯一权威来源；Tauri 侧 open_db() 只做「缺列补齐 + 同样的
+  4 步」，不再独立演进 schema）：
   1. 旧 schema: id INTEGER PK AUTOINCREMENT + qid TEXT UNIQUE
-     -> 新 schema: qid TEXT PRIMARY KEY (无 id 列)
+     -> 新 schema: qid TEXT PRIMARY KEY (无 id 列)   ← 破坏性重建，全程事务包裹
   2. 缺 updated_at 列：补上
   3. 缺 P2 记忆列：逐条幂等补齐
   4. qid 长度=5 (Q-NNN) -> 长度=6 (Q-0NNN)
@@ -30,6 +31,7 @@
   add_link(conn, from_qid, to_qid, kind, note) 建关系（幂等）
 """
 import os
+import re
 import sqlite3
 import sys
 
@@ -230,32 +232,45 @@ def ensure_schema(conn, verbose=False):
     changed = False
 
     # 2. legacy id-PK migration
+    #    破坏性重建（DROP TABLE + RENAME）必须整体在事务里：任何一条语句失败都要回滚，
+    #    绝不留「原表已删、新表未改名」的半迁移状态（那会永久丢掉全部 QA 记录）。
     if _has_column(conn, "id"):
         if verbose:
             print("[ensure_schema] Migrating legacy id-PK schema to qid-PK...")
-        conn.executescript(
-            """
-            CREATE TABLE qa_entries_new (
-                qid        TEXT PRIMARY KEY,
-                date       TEXT NOT NULL,
-                category   TEXT NOT NULL,
-                status     TEXT NOT NULL DEFAULT 'Pending',
-                phenomenon TEXT NOT NULL,
-                root_cause TEXT DEFAULT '',
-                solution   TEXT DEFAULT '',
-                files      TEXT DEFAULT '',
-                created_at TEXT DEFAULT (datetime('now','localtime'))
-            );
-            INSERT INTO qa_entries_new
-                (qid, date, category, status, phenomenon, root_cause, solution, files, created_at)
-            SELECT qid, date, category, status, phenomenon,
-                   COALESCE(root_cause, ''), COALESCE(solution, ''), COALESCE(files, ''),
-                   COALESCE(created_at, datetime('now','localtime'))
-            FROM qa_entries;
-            DROP TABLE qa_entries;
-            ALTER TABLE qa_entries_new RENAME TO qa_entries;
-            """
-        )
+        try:
+            # 注意：sqlite3 的 executescript() 会先隐式 COMMIT 掉挂起事务，
+            # 所以 BEGIN/COMMIT 必须写在脚本体内，不能用 conn.execute("BEGIN")。
+            conn.executescript(
+                """
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS qa_entries_new (
+                    qid        TEXT PRIMARY KEY,
+                    date       TEXT NOT NULL,
+                    category   TEXT NOT NULL,
+                    status     TEXT NOT NULL DEFAULT 'Pending',
+                    phenomenon TEXT NOT NULL,
+                    root_cause TEXT DEFAULT '',
+                    solution   TEXT DEFAULT '',
+                    files      TEXT DEFAULT '',
+                    created_at TEXT DEFAULT (datetime('now','localtime'))
+                );
+                INSERT INTO qa_entries_new
+                    (qid, date, category, status, phenomenon, root_cause, solution, files, created_at)
+                SELECT qid, date, category, status, phenomenon,
+                       COALESCE(root_cause, ''), COALESCE(solution, ''), COALESCE(files, ''),
+                       COALESCE(created_at, datetime('now','localtime'))
+                FROM qa_entries;
+                DROP TABLE qa_entries;
+                ALTER TABLE qa_entries_new RENAME TO qa_entries;
+                COMMIT;
+                """
+            )
+        except sqlite3.Error:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            raise
         if verbose:
             print("[ensure_schema]   legacy migration done")
         changed = True
@@ -317,14 +332,28 @@ def get_next_qid(conn):
     return f"Q-{max_num + 1:04d}"
 
 
+_QID_RE = re.compile(r"^Q?-?(\d{1,6})$")
+
+
 def normalize_id(id_str):
     """Normalize user input to canonical 4-digit Q-NNNN format.
 
-    Accepts: "1", "01", "001", "Q-1", "Q-01", "Q-001", "Q-0001", "q-1", " 1 ".
+    Accepts: "1", "01", "001", "Q-1", "Q-01", "Q-001", "Q-0001", "q-1", " 1 ", "Q3".
     Returns: "Q-0001" etc.
+
+    Raises ValueError on anything non-numeric / empty —— 绝不静默回落到 Q-0001，
+    否则打错ID 时会静默操作到另一条记录（历史 bug：normalize_id("Q") == "Q-0001"）。
     """
-    id_str = id_str.strip().upper()
-    if not id_str.startswith("Q-"):
-        num = id_str.lstrip("Q-").lstrip("0") or "1"
-        id_str = f"Q-{int(num):04d}"
-    return id_str
+    m = _QID_RE.match(str(id_str).strip().upper())
+    if not m:
+        raise ValueError("invalid qid: %r（期望 3/ Q-3 / Q-0003 之类的数字编号）" % (id_str,))
+    return "Q-%04d" % int(m.group(1))
+
+
+def normalize_id_or_exit(id_str):
+    """CLI 版normalize_id：非法输入打印错误并 exit 2（区别于 1=未找到 / 3=guard 拒绝）。"""
+    try:
+        return normalize_id(id_str)
+    except ValueError as e:
+        print("Error: %s" % e, file=sys.stderr)
+        sys.exit(2)

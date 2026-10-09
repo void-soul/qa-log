@@ -5,6 +5,9 @@ import json
 import os
 import argparse
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from stdin_io import read_text_stdin  # noqa: E402
+
 # 强制UTF-8输出
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -64,9 +67,10 @@ def main():
             print("Error: Invalid JSON input", file=sys.stderr)
             sys.exit(1)
     elif not sys.stdin.isatty():
-        # 管道模式，从stdin读取
-        raw = sys.stdin.read()
-        if raw.strip():
+        # 管道模式，从 stdin 读取（带超时保护：宿主给的「永不 EOF 的 PIPE」不会把
+        # 进程永久挂死，例如 Node execFile / 未 close 的 subprocess.Popen）
+        raw = read_text_stdin()
+        if raw:
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:

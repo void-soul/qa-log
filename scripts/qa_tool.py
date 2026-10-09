@@ -50,12 +50,13 @@ from db import (
     ensure_schema,
     get_next_qid,
     log_event,
-    normalize_id,
     resolve_db_path,
 )
+from db import normalize_id_or_exit as normalize_id
 
 # 记忆写入闸门（P1）：append/update 默认过 guard，reject 时拒绝写入
 import memory_guard
+from stdin_io import read_text_stdin
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -166,12 +167,13 @@ def cmd_recall(args):
 
     conn = connect(args.db)
     if args.qid:
+        target_qid = normalize_id(args.qid)
         row = conn.execute(
             "SELECT phenomenon, root_cause, solution, files FROM qa_entries WHERE qid = ?",
-            (normalize_id(args.qid),),
+            (target_qid,),
         ).fetchone()
         if row is None:
-            print(f"Entry {normalize_id(args.qid)} not found.", file=sys.stderr)
+            print(f"Entry {target_qid} not found.", file=sys.stderr)
             conn.close()
             sys.exit(1)
         query = " ".join(x for x in (row["phenomenon"], row["root_cause"],
@@ -421,19 +423,22 @@ def read_json_input(args):
 
     来源优先级：
       1. --json 指定 JSON 字符串
-      2. stdin 管道传入的 JSON
-      3. 无则返回 None
+      2. bare --json：stdin 管道传入的 JSON
+      3. stdin 重定向自文件/管道且立刻会 EOF：自动读取
+      4. 无则返回 None
     中文内容建议通过 JSON 方式传入，避免 Windows 命令行 ANSI/GBK 编码导致乱码。
     """
     raw = None
     from_json_flag = getattr(args, "json", None)
     if from_json_flag == "__STDIN__":
         # bare --json：从 stdin 管道读取（彻底避免命令行传中文）
-        raw = sys.stdin.read().strip()
+        raw = read_text_stdin()
     elif from_json_flag:
         raw = from_json_flag
-    elif not sys.stdin.isatty():
-        raw = sys.stdin.read().strip()
+    else:
+        # 自动读 stdin：read_text_stdin 内部带超时保护，宿主给的「永不 EOF 的
+        # PIPE」（Node execFile / 未 close 的 Popen）不会把进程永久挂死。
+        raw = read_text_stdin()
     if not raw:
         return None
     # 剥离可能的 UTF-8 BOM（PowerShell 管道到原生程序时会带 BOM）

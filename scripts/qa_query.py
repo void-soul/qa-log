@@ -38,6 +38,8 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import db as qa_db  # noqa: E402  （模块级导入：norm_qid 等辅助函数也要用）
+
 DB_NAME = "qa.db"
 
 
@@ -53,9 +55,7 @@ def emit(ok, data=None, error=None):
 
 
 def connect(db_path):
-    """打开 qa.db（只读打开失败则退回普通打开），并确保 schema 存在。"""
-    import db as qa_db
-
+    """打开 qa.db（不存在则明确报错，不静默建库），并确保 schema 存在。"""
     if not os.path.isfile(db_path):
         emit(False, error=f"qa.db not found: {db_path}")
 
@@ -97,10 +97,16 @@ def act_qa_list(conn, a):
     emit(True, {"entries": rows_to_dicts(conn.execute(sql, params).fetchall())})
 
 
+def norm_qid(raw):
+    """归一化 qid；非法输入直接 emit 错误（绝不静默落到 Q-0001）。"""
+    try:
+        return qa_db.normalize_id(raw)
+    except ValueError as e:
+        emit(False, error=str(e))
+
+
 def act_qa_get(conn, a):
-    qid = (a.qid or "").strip().upper()
-    if not qid.startswith("Q-"):
-        qid = "Q-" + qid.lstrip("Q-").zfill(4)
+    qid = norm_qid(a.qid or "")
     row = conn.execute("SELECT * FROM qa_entries WHERE qid = ?", (qid,)).fetchone()
     if row is None:
         emit(False, error=f"not found: {qid}")
@@ -112,23 +118,38 @@ def act_qa_update(conn, a):
 
     写入前必过记忆闸门（memory_guard）；reject 时拒绝写入，除非 JSON 里带 "force": true。
     """
-    import db as qa_db
-
     raw = sys.stdin.read() or ""
     try:
         data = json.loads(raw)
     except Exception as e:
         emit(False, error=f"invalid stdin JSON: {e}")
         return
-    qid = qa_db.normalize_id(str(data.get("qid", "")))
+    qid = norm_qid(data.get("qid") or a.qid or "")
     fields = {
         k: str(data.get(k) or "")
         for k in ("date", "category", "status", "phenomenon", "root_cause", "solution", "files")
         if k in data
     }
+    # date 是审计与陈旧度（memory_health.suggest_archive）的基准，只读字段：
+    # 允许插件改写会让「已解决待验证挂起 N 天」的判定失真。
+    fields.pop("date", None)
     if not fields:
         emit(False, error="no fields to update")
         return
+
+    # 状态机与 CLI(qa_tool.update) 同源收口：force 只跳内容类 reject，不允许写非法状态。
+    if "status" in fields:
+        from qa_tool import STATUS_SUGGESTIONS, VALID_STATUSES
+        _raw = fields["status"].strip()
+        _norm = _raw if _raw in VALID_STATUSES else next(
+            (v for v in VALID_STATUSES if v.lower() == _raw.lower()), None)
+        if _norm is None:
+            _hint = STATUS_SUGGESTIONS.get(_raw.lower())
+            emit(False, error="invalid status '%s' (allowed: %s)%s"
+                 % (_raw, ", ".join(VALID_STATUSES),
+                    "; did you mean '%s'?" % _hint if _hint else ""))
+            return
+        fields["status"] = _norm
 
     # 记忆闸门：按合并后的最终值检查（现状插件路径无任何校验，故必须收口）
     try:
@@ -188,9 +209,7 @@ def act_qa_update(conn, a):
 
 
 def act_qa_delete(conn, a):
-    import db as qa_db
-
-    qid = qa_db.normalize_id(a.qid or "")
+    qid = norm_qid(a.qid or "")
     row0 = conn.execute(
         "SELECT date, category, status, phenomenon FROM qa_entries WHERE qid = ?", (qid,)
     ).fetchone()

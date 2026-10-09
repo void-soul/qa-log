@@ -51,7 +51,9 @@ def main():
     db_path = resolve_db_path(args.db)
     if not os.path.exists(db_path):
         print("%s not found. Run 'python scripts/qa_tool.py setup' first." % db_path)
-        return
+        # 库不存在 = 执行失败：必须非零退出，否则脚本化调用（CI / agent 编排）
+        # 会把「没找到库」读成「搜完了，0 条」。
+        sys.exit(2)
 
     conn = connect(args.db)
     results = search_entries(conn, args.query, args.status, args.category, args.limit,
@@ -60,7 +62,7 @@ def main():
     if not results:
         print("No matching entries found.")
         conn.close()
-        return
+        sys.exit(1)
 
     print("Found %d entries:\n" % len(results))
     for r in results:

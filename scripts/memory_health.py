@@ -113,6 +113,29 @@ def mark_conflicts(conn, conflicts):
     return len(conflicts)
 
 
+def _db_signature(conn):
+    """库内容指纹：条目数 + 最新更新时间 + 召回热度 + 归档数 + 关系数。
+
+    用来给下面两次 O(n^2) 扫描做缓存判定——库没变就不重算。
+    """
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*), COALESCE(MAX(updated_at), ''), COALESCE(SUM(COALESCE(access_count,0)), 0),"
+            " COALESCE(SUM(COALESCE(archived,0)), 0), COALESCE(SUM(COALESCE(needs_review,0)), 0),"
+            " COALESCE(MAX(created_at), '') FROM qa_entries"
+        ).fetchone()
+    except Exception:
+        return None
+    try:
+        n_links = conn.execute("SELECT COUNT(*) FROM qa_links").fetchone()[0]
+    except Exception:
+        n_links = 0
+    return tuple(row) + (n_links,)
+
+
+_scan_cache = {}
+
+
 def health_report(conn):
     """记忆健康报告（CLI 与插件面板共用）。"""
     total = conn.execute("SELECT COUNT(*) FROM qa_entries").fetchone()[0]
@@ -137,13 +160,27 @@ def health_report(conn):
             has_tags = False
         if not has_files and not has_tags and r["qid"] not in linked and not r["parent_qid"]:
             orphans.append(r["qid"])
+
+    # duplicate_pairs / conflicts 是全表两两配对（O(n^2)），插件每次刷新都会调
+    # health_report；按库指纹缓存，库没变就复用上次结果。
+    sig = _db_signature(conn)
+    if sig is None or _scan_cache.get("sig") != sig:
+        _scan_cache.clear()
+        _scan_cache["sig"] = sig
+        try:
+            _scan_cache["duplicate_pairs"] = MR.find_near_duplicates(conn)[:20]
+            _scan_cache["conflicts"] = find_conflicts(conn)[:20]
+        except Exception:
+            _scan_cache["duplicate_pairs"] = []
+            _scan_cache["conflicts"] = []
+
     return {
         "total": total, "archived": archived, "needs_review": needs,
         "by_status": by_status,
         "stale_pending": stale[:20],
         "orphans": orphans[:20],
-        "duplicate_pairs": MR.find_near_duplicates(conn)[:20],
-        "conflicts": find_conflicts(conn)[:20],
+        "duplicate_pairs": _scan_cache["duplicate_pairs"],
+        "conflicts": _scan_cache["conflicts"],
         "added_7d": conn.execute(
             "SELECT COUNT(*) FROM qa_entries WHERE created_at >= datetime('now','-7 day')"
         ).fetchone()[0],

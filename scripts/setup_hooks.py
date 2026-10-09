@@ -38,7 +38,6 @@ SETTINGS = os.path.join(os.path.expanduser("~"), ".codebuddy", "settings.json")
 HOOK_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent_log_hook.py")
 BACKUP = SETTINGS + ".bak-agentlog"
 EVENTS = ("UserPromptSubmit", "Stop")
-BACKUP_NAME = "bak-agentlog"
 
 
 def load_settings():
@@ -61,6 +60,12 @@ def save_settings(cfg):
         f.write("\n")
 
 
+def python_cmd():
+    """hook 里的解释器：优先 `python`，本机只有官方 `py -3` 时回退（写死 python 会静默失效）。"""
+    import shutil
+    return "python" if shutil.which("python") else "py -3"
+
+
 def hook_entry():
     """构造一条 hook 配置（command 指向同目录的 agent_log_hook.py）。"""
     # 统一用正斜杠：JSON 与 Git Bash 都友好
@@ -68,7 +73,7 @@ def hook_entry():
     return [{
         "hooks": [{
             "type": "command",
-            "command": f'python "{script}"',
+            "command": f'{python_cmd()} "{script}"',
             "timeout": 30,
         }]
     }]
@@ -81,6 +86,17 @@ def is_ours(cfg, event):
             if "agent_log_hook.py" in str(h.get("command", "")):
                 return True
     return False
+
+
+def strip_ours(groups):
+    """只摘掉本脚本注册的 group，**保留用户自己挂在同一事件上的 hook**。
+
+    绝不能 `hooks[ev] = hook_entry()` 整体覆盖：那会把用户自己的 hook 静默删掉
+    （启用/停用一次即永久丢失，且首次安装的备份无法回滚后续覆盖）。
+    """
+    return [g for g in (groups or [])
+            if not any("agent_log_hook.py" in str(h.get("command", ""))
+                       for h in (g.get("hooks") or []))]
 
 
 def do_install():
@@ -102,14 +118,13 @@ def do_install():
         if ev not in EVENTS and is_ours(cfg, ev):
             hooks.pop(ev, None)
             changed.append(f"{ev}（移除，不再需要）")
-    # 再写入/更新需要的两个事件
+    # 再写入/更新需要的两个事件：只替换自己那一条，用户自己的 group 原样保留
     for ev in EVENTS:
-        if is_ours(cfg, ev):
-            hooks[ev] = hook_entry()  # 更新（脚本路径可能变化）
-            changed.append(f"{ev}（更新）")
-        else:
-            hooks[ev] = hook_entry()
-            changed.append(f"{ev}（新增）")
+        before = hooks.get(ev) or []
+        ours = strip_ours(before)
+        had_ours = len(ours) != len(before)
+        hooks[ev] = ours + hook_entry()
+        changed.append(f"{ev}（{'更新' if had_ours else '新增'}）")
 
     save_settings(cfg)
     print(f"✅ 已写入 {SETTINGS}")
@@ -128,16 +143,23 @@ def do_remove():
         return
     removed = []
     for ev in EVENTS:
-        if is_ours(cfg, ev):
+        before = hooks.get(ev) or []
+        ours = strip_ours(before)
+        if len(ours) == len(before):
+            continue                      # 本脚本没在这个事件上注册过，不碰
+        kept = ours                        # 用户自己的 hook 必须保留
+        if kept:
+            hooks[ev] = kept
+        else:
             hooks.pop(ev, None)
-            removed.append(ev)
+        removed.append(ev)
     if not removed:
         print("未发现本脚本注册的 hooks，未做改动。")
         return
     if not hooks:
         cfg.pop("hooks", None)  # 空的 hooks 段一并移除
     save_settings(cfg)
-    print(f"✅ 已从 {SETTINGS} 移除: {', '.join(removed)}")
+    print(f"✅ 已从 {SETTINGS} 移除: {', '.join(removed)}（你自己挂在这些事件上的 hook 已保留）")
     print("重启 CodeBuddy 后生效。")
 
 

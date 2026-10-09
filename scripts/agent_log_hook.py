@@ -115,10 +115,15 @@ def open_db(db_path):
     conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
     try:
-        # 若库曾被设为 WAL，这里转回 DELETE 并 checkpoint 掉 -wal 文件（幂等）
-        conn.execute("PRAGMA journal_mode=DELETE")
         conn.execute("PRAGMA busy_timeout=8000")
-    except Exception:
+        # journal_mode 只在需要时协商一次（幂等）。不要每轮 hook 都强制改写：
+        # 改写 journal_mode 是写操作、要库级排他锁，还会 checkpoint 掉 -wal 文件，
+        # 与并发读者（插件 qa-list / GUI）争锁 → SQLITE_BUSY。
+        cur = conn.execute("PRAGMA journal_mode")
+        cur = cur.fetchone() if cur else None
+        if cur and str(cur[0]).lower() == "wal":
+            conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.Error:
         pass
     qa_db.ensure_schema(conn)
     return conn
