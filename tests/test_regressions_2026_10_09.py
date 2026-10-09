@@ -279,5 +279,85 @@ class TestHealthScanCache(unittest.TestCase):
                 conn.close()
 
 
+class TestLegacyMigration(unittest.TestCase):
+    """旧库升级：qid 归一化 / legacy 重建保留 P2 列 / migrate 子命令。"""
+
+    LEGACY_SQL = (
+        "CREATE TABLE qa_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, qid TEXT UNIQUE,"
+        " date TEXT, category TEXT, status TEXT, phenomenon TEXT, root_cause TEXT,"
+        " solution TEXT, files TEXT, created_at TEXT,"
+        " importance INTEGER DEFAULT 50, archived INTEGER DEFAULT 0, tags TEXT DEFAULT '[]');"
+    )
+
+    def _legacy_db(self, rows):
+        d = tempfile.mkdtemp(prefix="qa_legacy_")
+        p = os.path.join(d, "qa.db")
+        c = sqlite3.connect(p)
+        c.executescript(self.LEGACY_SQL)
+        for r in rows:
+            c.execute(
+                "INSERT INTO qa_entries (qid,date,category,status,phenomenon,"
+                "importance,archived,tags) VALUES (?,?,?,?,?,?,?,?)", r)
+        c.commit()
+        c.close()
+        return p
+
+    def test_short_qid_is_normalized(self):
+        p = self._legacy_db([
+            ("Q-7", "2026-01-02", "Bug Fix", "已验证", "两位 qid", 50, 0, "[]"),
+            ("Q-1234", "2026-01-03", "Feature", "已验证", "正常", 50, 0, "[]"),
+        ])
+        conn = qa_db.connect(p)
+        qids = sorted(r[0] for r in conn.execute("SELECT qid FROM qa_entries"))
+        nxt = qa_db.get_next_qid(conn)
+        conn.close()
+        self.assertEqual(qids, ["Q-0007", "Q-1234"])
+        self.assertEqual(nxt, "Q-1235")
+        self.assertEqual(qa_db.normalize_id("7"), "Q-0007")
+
+    def test_legacy_rebuild_preserves_p2(self):
+        p = self._legacy_db([
+            ("Q-7", "2026-01-02", "Bug Fix", "已验证", "带 P2", 88, 1, '["perf"]'),
+        ])
+        conn = qa_db.connect(p)
+        row = conn.execute(
+            "SELECT qid,importance,access_count,archived,tags FROM qa_entries").fetchone()
+        conn.close()
+        self.assertEqual(row["qid"], "Q-0007")
+        self.assertEqual(row["importance"], 88, "importance 不能被重置为50")
+        self.assertEqual(row["archived"], 1, "归档标记不能丢")
+        self.assertIn("perf", row["tags"])
+
+    def test_qid_clash_does_not_lock_database(self):
+        """两个旧写法归一到同一 qid 时必须只告警，否则库会变成谁都打不开。"""
+        p = self._legacy_db([
+            ("Q-7", "2026-01-02", "Bug Fix", "已验证", "A", 50, 0, "[]"),
+            ("Q-00007", "2026-01-03", "Bug Fix", "已验证", "B", 50, 0, "[]"),
+        ])
+        conn = qa_db.connect(p)          # 不应抛 IntegrityError
+        qids = sorted(r[0] for r in conn.execute("SELECT qid FROM qa_entries"))
+        conn.close()
+        self.assertEqual(qids, ["Q-00007", "Q-7"], "冲突时应保持原样")
+
+    def test_migrate_cli(self):
+        p = self._legacy_db([
+            ("Q-7", "2026-01-02", "Bug Fix", "已解决", "旧状态", 50, 0, "[]"),
+        ])
+        r = run_cli(["--db", p, "migrate"])
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("dry-run", r.stdout)
+        self.assertIn("已解决", r.stdout)
+
+        r = run_cli(["--db", p, "migrate", "--strict"])
+        self.assertEqual(r.returncode, 3, "--strict 遇非规范 status 应 exit 3")
+
+        r = run_cli(["--db", p, "migrate", "--apply"])
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("已修复", r.stdout)
+        r = run_cli(["--db", p, "migrate"])
+        self.assertIn("一切正常", r.stdout)
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
