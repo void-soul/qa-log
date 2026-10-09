@@ -1,6 +1,9 @@
-<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-  <!-- 对话气泡 + 列表线：表示 Agent 会话日志 -->
-  <path d="M4 6.5A2.5 2.5 0 016.5 4h11A2.5 2.5 0 0120 6.5v7A2.5 2.5 0 0117.5 16H10l-4.2 3.4A.6.6 0 015 18.9V16h-.5A.5.5 0 014 15.5z"/>
-  <path d="M8 8.5h8"/>
-  <path d="M8 12h5"/>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- Agent log: otter head + one rounded log line -->
+  <g fill="currentColor">
+    <circle cx="5.9" cy="6" r="2.7"/>
+    <circle cx="18.1" cy="6" r="2.7"/>
+    <path fill-rule="evenodd" d="M12 3.8a7.2 6.6 0 1 0 0 13.2 7.2 6.6 0 1 0 0-13.2Zm-2.2 4.6a1.15 1.3 0 1 0 0 2.6 1.15 1.3 0 1 0 0-2.6Zm4.4 0a1.15 1.3 0 1 0 0 2.6 1.15 1.3 0 1 0 0-2.6Z"/>
+    <rect x="5.6" y="18.4" width="12.8" height="2.8" rx="1.4"/>
+  </g>
 </svg>
