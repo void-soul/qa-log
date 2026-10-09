@@ -59,6 +59,30 @@ cd <project-root> && python scripts/search_qa.py --status Pending --category Bug
 cd <project-root> && python scripts/search_qa.py 保存 -n 20
 ```
 
+#
+
+### JSON 输出、统计与 Agent 日志（qa_query.py）
+
+需要**机器可读输出**（脚本/插件消费）或统计信息时用 `qa_query.py`。
+`--db` 可省略（cwd 是项目根时默认 `./qa.db`）；要显式指定时**必须写在 action 之前**（写在后面会报 `unrecognized arguments`）：
+
+```bash
+# 列出 QA（JSON）
+cd <project-root> && python scripts/qa_query.py --db qa.db qa-list --limit 20
+
+# 单条（JSON）
+cd <project-root> && python scripts/qa_query.py --db qa.db qa-get --qid Q-0005
+
+# 统计：总条数 + 各状态/类别分布
+cd <project-root> && python scripts/qa_query.py --db qa.db stats
+
+# Agent 会话日志与出现过的项目
+cd <project-root> && python scripts/qa_query.py --db qa.db log-sessions --limit 10
+cd <project-root> && python scripts/qa_query.py --db qa.db projects
+```
+
+输出固定为单行 JSON：`{"ok": true, "data": ...}` 或 `{"ok": false, "error": "..."}`。
+
 ## 输出格式
 
 ```

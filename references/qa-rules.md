@@ -57,9 +57,9 @@ append ──► Pending ──► 已解决待验证 ──► 已验证
 |---------|--------|
 | 命令行直接传中文 `-q/-r/-a/-f/-s "中文"` | ❌ 乱码（GBK 破坏，如"相机"→"鐩告満"） |
 | PowerShell 文本管道 `echo中文 \| python` | ❌ 中文变 `?` |
-| **Python `subprocess` 传 stdin** | ✅ 100% 可靠 |
-| **文件重定向 `python ... < file.json`** | ✅ 100% 可靠 |
-| **bare `--json` + stdin（UTF-8）** | ✅ 100% 可靠 |
+| **Python `subprocess` 传 stdin** | ✅ 100% 可靠（**首选**，跨平台一致） |
+| **文件重定向 `python ... < file.json`** | ⚠️ bash 可靠；**PowerShell 原生不支持 `<`**，须用 `cmd /c "…"` 包一层（见 3.2） |
+| **bare `--json` + stdin（UTF-8）** | ✅ 100% 可靠（上面两种方式都走它） |
 
 `qa_tool.py` 的 `append`/`update` 已支持 **bare `--json`**（不跟值，从 stdin 读 JSON），脚本已强制 UTF-8（`stdin/stdout/stderr` reconfigure + 剥离 BOM）。
 
@@ -88,6 +88,43 @@ echo '{"question":"中文"}' | python qa_tool.py append --json
 
 - 命令行参数优先级高于 JSON 字段（两者都传时以命令行参数为准）。
 - JSON 中多行文本用 `\n` 转义。
+
+---
+
+### 3.1 方式 A 怎么落地执行（Windows / PowerShell）
+
+上面的片段是 Python，**不要用 `python -c "…"` 直接跑**：PowerShell 会撕碎嵌套引号与中文，
+实测报 `SyntaxError: unterminated string literal`。可靠做法是落成临时文件：
+
+1. 把片段写成一个临时 `.py`——**放系统临时目录，不要放项目根目录**（否则会污染仓库，
+   忘记删就会混进 `git status`）；
+2. `python <临时文件>.py` 执行；
+3. 执行完**立即删除**临时文件。
+
+片段里的 `subprocess.run([...], input=payload, encoding="utf-8")` 是关键：
+JSON 从 stdin 进、显式 UTF-8，中文全程不经过命令行参数，也不经过 PowerShell 管道。
+
+### 3.2 平台差异与参数位置（实测）
+
+| 事项 | 结论 |
+|------|------|
+| `<` 文件重定向（方式 B） | ✅ bash 可用（`python … < /tmp/payload.json`）<br>❌ **PowerShell 原生不支持 `<`**，报语法错误<br>✅ Windows 替代写法（已实测通过）：`cmd /c "python … --json < file"`——**必须有外层引号**，否则 `<` 先被 PowerShell 解析而报错 |
+| `--db` 参数位置 | **全局参数，必须写在子命令之前**：`python qa_tool.py --db qa.db summary`。写在后面会报 `unrecognized arguments`（exit 2） |
+| 是否需要传 `--db` | **通常不需要**：cwd 已是项目根目录时脚本默认读写 `./qa.db`，多传反而容易写错位置 |
+| `update` 的 ID | **位置参数**：`update Q-0005 --json`；不存在 `--id` 写法 |
+| `python -c "…"` | ❌ 不要用（见 3.1），引号/中文都会被 PowerShell 破坏 |
+
+### 3.3 查条目不要自己写 SQL
+
+需要「这个 ID 被占用了吗 / 找找关于 X 的历史条目 / 现在有多少条」时，用现成 CLI，
+**不要手写 `sqlite3` 查询 qa.db**（重复实现，还会绕过 `db.py` 的 4 位补零与自动迁移）：
+
+| 目的 | 命令 |
+|------|------|
+| 下一个可用 ID | `python scripts/qa_tool.py next-id` |
+| 列表 / 单条 | `python scripts/qa_tool.py summary` · `python scripts/qa_tool.py get Q-0005` |
+| 关键词/状态/类别搜索 | `python scripts/search_qa.py 关键词 --status Pending -n 20` |
+| JSON 输出、统计、Agent 日志 | `python scripts/qa_query.py qa-list` · `python scripts/qa_query.py stats`（`--db` 可省略；要显式指定时须写在 action **之前**。详见 `skills/search.md`） |
 
 ---
 

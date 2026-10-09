@@ -165,6 +165,8 @@ cd <project-root> && python <skill-path>/scripts/qa_tool.py setup
 | `solution` | `-a` | 解决方案步骤（覆盖「解决方案」） |
 | `files` | `-f` | 变更文件表（覆盖「涉及文件」，`| File | Change |` 格式） |
 
+> **参数位置**：`--db` 是**全局参数，必须写在子命令之前**（`python qa_tool.py --db qa.db summary`）；cwd 已在项目根目录时**不需要传**它。`update` 的 ID 是**位置参数**（`update Q-0005 --json`），没有 `--id` 写法。平台差异（PowerShell 不支持 `<` 重定向、`python -c` 不可用）与执行方式见 [`references/qa-rules.md`](references/qa-rules.md) 第 3.1～3.3 节。
+
 > **建议用 Python `subprocess` + bare `--json`（stdin）一次传多个字段**（命令行/管道无中文，彻底防乱码）：
 > ```python
 > import json, subprocess
