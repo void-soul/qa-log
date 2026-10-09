@@ -6,3 +6,4 @@ src/**
 **/*.map
 .gitignore
 tests/**
+media/otter-color.png
