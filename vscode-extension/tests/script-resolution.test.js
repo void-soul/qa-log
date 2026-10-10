@@ -63,8 +63,41 @@ test('扩展内置脚本是首选候选（跨机自包含，不受旧版安装�
   );
 });
 
+test('内置脚本集合对本地 import 的传递闭包完整（防依赖闭包遗漏）', () => {
+  const bundledDir = path.join(__dirname, '..', 'scripts');
+  const srcDir = path.join(__dirname, '..', '..', 'scripts');
+  const isLocalModule = (n) => fs.existsSync(path.join(srcDir, n + '.py'));
+  const importsOf = (file) => {
+    const set = new Set();
+    // ^\s* 覆盖函数体内的惰性 import（act_health 的 import memory_health 等）
+    for (const m of fs.readFileSync(file, 'utf8').matchAll(/^\s*(?:import|from)\s+([A-Za-z_][A-Za-z0-9_]*)/gm)) {
+      set.add(m[1]);
+    }
+    return set;
+  };
+  // 从 qa_query.py 出发沿本地 import 做 BFS 传递闭包；
+  // 每一环都必须已内置（0.2.2 的教训：只查直接依赖会漏掉 qa_tool→stdin_io 这类二跳）
+  const seen = new Set();
+  const queue = ['qa_query.py'];
+  let locals = 0;
+  while (queue.length) {
+    const f = queue.shift();
+    if (seen.has(f)) continue;
+    seen.add(f);
+    const bundled = path.join(bundledDir, f);
+    assert.ok(fs.existsSync(bundled), `依赖闭包需要 ${f} 但扩展未内置（先跑 npm run sync-vendor）`);
+    for (const n of importsOf(bundled)) {
+      if (isLocalModule(n)) {
+        locals += 1;
+        queue.push(n + '.py');
+      }
+    }
+  }
+  assert.ok(locals > 0, '应至少识别出一个本地 import（正则或路径配置可能失效）');
+});
+
 test('扩展内置脚本与 skill 仓库源保持一致（防漂移）', () => {
-  const files = ['qa_query.py', 'db.py', 'memory_guard.py', 'memory_recall.py', 'agent_log_hook.py'];
+  const files = ['qa_query.py', 'qa_tool.py', 'stdin_io.py', 'db.py', 'memory_health.py', 'memory_guard.py', 'memory_recall.py', 'agent_log_hook.py'];
   for (const f of files) {
     const bundled = path.join(__dirname, '..', 'scripts', f);
     const source = path.join(__dirname, '..', '..', 'scripts', f);
