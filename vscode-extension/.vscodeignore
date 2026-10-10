@@ -5,6 +5,7 @@ src/**
 !src/views.js
 **/_tmp*
 **/*.map
+**/__pycache__/**
 .gitignore
 tests/**
 media/otter-color.png

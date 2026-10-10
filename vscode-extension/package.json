@@ -2,7 +2,7 @@
   "name": "qa-log-browser",
   "displayName": "QA Log",
   "description": "在侧边栏浏览项目根目录 qa.db：QA 记录 + CodeBuddy Agent 会话日志",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "icon": "media/icon.png",
   "publisher": "qa-log",
   "license": "Apache-2.0",
