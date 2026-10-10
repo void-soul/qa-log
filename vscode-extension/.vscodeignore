@@ -1,4 +1,5 @@
 .vscode/**
+sync-vendor.js
 src/**
 !src/extension.js
 !src/views.js

@@ -2,7 +2,7 @@
   "name": "qa-log-browser",
   "displayName": "QA Log",
   "description": "在侧边栏浏览项目根目录 qa.db：QA 记录 + CodeBuddy Agent 会话日志",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "icon": "media/icon.png",
   "publisher": "qa-log",
   "license": "Apache-2.0",
@@ -129,6 +129,8 @@
     }
   },
   "scripts": {
+    "sync-vendor": "node sync-vendor.js",
+    "prepackage": "node sync-vendor.js",
     "test": "node --test \"tests/*.test.js\"",
     "package": "npx --yes @vscode/vsce package --no-dependencies"
   }
