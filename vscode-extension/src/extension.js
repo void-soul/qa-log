@@ -853,15 +853,22 @@ class LogViewProvider {
 // ── 激活 ───────────────────────────────────────────────────────────────────
 
 class HealthViewProvider {
-  constructor(context) {
+  constructor(context, qaProvider) {
     this.context = context;
+    this.qaProvider = qaProvider;
   }
 
   async resolveWebviewView(view) {
     this.view = view;
     view.webview.options = { enableScripts: true };
     view.webview.onDidReceiveMessage((msg) => {
-      if (msg && msg.type === 'healthRefresh') this.render();
+      if (!msg) return;
+      if (msg.type === 'healthRefresh') {
+        this.render();
+      } else if (msg.type === 'gotoEntry' && this.qaProvider) {
+        // 健康视图点 QID → 复用 QA 详情面板（与列表视图同一个 openDetail 入口）
+        void this.qaProvider.openDetail(String(msg.qid || ''));
+      }
     });
     await this.render();
   }
@@ -892,7 +899,7 @@ function activate(context) {
 
   const qaProvider = new QaViewProvider(context);
   const logProvider = new LogViewProvider(context);
-  const healthProvider = new HealthViewProvider(context);
+  const healthProvider = new HealthViewProvider(context, qaProvider);
   refreshViews = () => { qaProvider.render(); logProvider.render(); healthProvider.render(); };
 
   context.subscriptions.push(

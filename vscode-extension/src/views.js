@@ -896,6 +896,8 @@ function healthHtml(data, nonce) {
   const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
   const body = `
   <div class="col">
+    <style>.row .qid{cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
+    .row .qid:hover{opacity:.7}</style>
     <div class="toolbar">
       <input id="q" type="text" placeholder="筛选 QID…">
       <button class="btn" id="refresh" title="刷新">↻</button>
@@ -946,21 +948,25 @@ function healthHtml(data, nonce) {
       items.slice(0, 12).forEach((it) => { html += render(it); });
     }
 
+    // QID 一律用 .qid span 单独包住：点击直达该条目的 QA 详情面板
+    // （宿主收到 gotoEntry 后走 QaViewProvider.openDetail，本视图不自己取数）。
     block('近似重复对（建议 consolidate 合并）', d.duplicate_pairs, (x) =>
-      '<div class="row"><span class="qm">' + esc(x.a) + ' ↔ ' + esc(x.b)
+      '<div class="row"><span class="qm qid">' + esc(x.a)
+      + '</span><span class="sub"> ↔ </span><span class="qm qid">' + esc(x.b)
       + '</span><span class="sub">score ' + esc(x.score) + ' · 保留 ' + esc(x.keep_hint) + '</span></div>',
       '无');
 
     block('冲突待审（现象相似但结论不同）', d.conflicts, (x) =>
-      '<div class="row"><span class="qm">' + esc(x.a) + ' ↔ ' + esc(x.b)
+      '<div class="row"><span class="qm qid">' + esc(x.a)
+      + '</span><span class="sub"> ↔ </span><span class="qm qid">' + esc(x.b)
       + '</span><span class="sub">' + esc(x.reason || '') + '</span></div>',
       '无');
 
     block('待验证积压（>180 天）', d.stale_pending, (q) =>
-      '<div class="row"><span class="qm">' + esc(q) + '</span></div>', '无');
+      '<div class="row"><span class="qm qid">' + esc(q) + '</span></div>', '无');
 
     block('孤立条目（无文件/标签/关系）', d.orphans, (q) =>
-      '<div class="row"><span class="qm">' + esc(q) + '</span></div>', '无');
+      '<div class="row"><span class="qm qid">' + esc(q) + '</span></div>', '无');
 
     root.innerHTML = html;
     const kw = $('q').value.trim().toLowerCase();
@@ -974,6 +980,12 @@ function healthHtml(data, nonce) {
 
   $('refresh').addEventListener('click', () => vscode.postMessage({ type: 'healthRefresh' }));
   $('q').addEventListener('input', render);
+  // 行内 QID 点击 → 打开 QA 详情（#list 是静态容器，render() 只换 innerHTML，委托存活）
+  $('list').addEventListener('click', (e) => {
+    const t = e.target && e.target.closest ? e.target.closest('.qid') : null;
+    if (!t) return;
+    vscode.postMessage({ type: 'gotoEntry', qid: (t.textContent || '').trim() });
+  });
   render();
   `;
   return page(nonce, csp, body, script);
