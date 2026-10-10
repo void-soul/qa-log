@@ -11,6 +11,9 @@ dist
 # IP 形象生成草稿（评审用，不入库；已选定的成品在 vscode-extension/media/otter-color.png）
 generated-images/
 
+# VS Code extension build artifact
+*.vsix
+
 # QA log 数据（用户私有，禁止入库）
 qa.db
 *.bak
