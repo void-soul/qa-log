@@ -9,6 +9,8 @@
  */
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { healthHtml, statCardHtml } = require('../src/views');
 
@@ -63,9 +65,45 @@ test('healthHtml: 重复对 / 冲突行渲染与筛选能力', () => {
   assert.ok(html.includes('冲突待审'), '应有冲突区块');
   // 注意：healthHtml 返回的是「webview 脚本源码」，A ↔ B 在运行时才拼出来，
   // 因此这里断言渲染模板而不是最终字符串。
-  assert.ok(html.includes("+ ' ↔ ' +"), '重复对/冲突行应按 A ↔ B 渲染');
+  assert.ok(
+    html.includes('↔ </span><span class="qm qid">'),
+    '重复对/冲突行应按 A ↔ B 渲染，且两个 QID 各自独立成 span',
+  );
   assert.ok(html.includes('esc(x.reason'), '冲突原因应经 esc 渲染');
   assert.ok(html.includes("querySelectorAll('.row')"), '应支持关键字筛选行');
+});
+
+test('healthHtml: 所有区块的 QID 都可点击（.qid）并回传 gotoEntry', () => {
+  const html = healthHtml({
+    duplicate_pairs: [{ a: 'Q-0001', b: 'Q-0002', score: 0.9, keep_hint: 'Q-0001' }],
+    conflicts: [{ a: 'Q-0003', b: 'Q-0004', reason: 'r' }],
+    stale_pending: ['Q-0005'],
+    orphans: ['Q-0006'],
+  }, NONCE);
+  // 四个区块（重复对/冲突各 2 个 QID + 积压 + 孤立）的模板都要带 .qid
+  const qidTpl = '<span class="qm qid">';
+  assert.strictEqual(
+    countOf(html, new RegExp(qidTpl.replace(/"/g, '\\"'), 'g')),
+    6,
+    '重复对 a/b、冲突 a/b、积压、孤立 共 6 处 QID 模板',
+  );
+  // 点击委托：#list 上 closest('.qid') 并 postMessage gotoEntry
+  assert.ok(html.includes("closest('.qid')"), '应有 #list 点击委托');
+  assert.ok(html.includes("type: 'gotoEntry'"), '应回传 gotoEntry');
+  assert.ok(html.includes('cursor:pointer'), 'QID 应有可点击样式提示');
+});
+
+test('宿主: gotoEntry 路由到 QaViewProvider.openDetail（与列表视图同一入口）', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.js'), 'utf8');
+  assert.ok(src.includes("msg.type === 'gotoEntry'"), 'HealthViewProvider 应处理 gotoEntry');
+  assert.ok(
+    /gotoEntry[\s\S]{0,200}qaProvider\.openDetail/.test(src),
+    'gotoEntry 应路由到 qaProvider.openDetail',
+  );
+  assert.ok(
+    src.includes('new HealthViewProvider(context, qaProvider)'),
+    'HealthViewProvider 构造时应注入 qaProvider',
+  );
 });
 
 test('healthHtml: 刷新消息与错误分支', () => {
