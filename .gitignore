@@ -12,7 +12,6 @@ dist
 generated-images/
 
 # VS Code extension build artifact
-*.vsix
 
 # QA log 数据（用户私有，禁止入库）
 qa.db
