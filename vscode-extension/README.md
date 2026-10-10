@@ -18,6 +18,7 @@
 
 | 版本 | 变化 |
 |------|------|
+| **0.2.3** | 内置脚本补上 0.2.2 遗漏的 `memory_health.py`、`qa_tool.py`、`stdin_io.py`：「记忆健康」视图报 memory_health module not available、更新状态时 `from qa_tool import` / `No module named 'stdin_io'` 直接失败，一并修复 |
 | **0.2.2** | 扩展自带依赖的 Python 脚本（`scripts/`，打包时由 `sync-vendor.js` 从 skill 仓库自动同步），**只装扩展即可在任何机器上用**，无需另外安装 skill；修复其他电脑「找不到 qa_query.py」报错 |
 | **0.2.1** | 补上扩展图标（media/icon.png），此前后市场与扩展列表显示默认占位方块 |
 | **0.2.0** | 活动栏图标换为单色水獭字形；脚本解析改为按 action 支持性挑选（旧版安装副本会被自动跳过）；配合 skill 侧的 qid 归一化、migrate 命令与旧库升级流程 |
@@ -29,9 +30,11 @@
 扩展的**全部读写**（列表、详情、编辑、删除、健康报告、召回）都是启动 `scripts/qa_query.py`
 子进程完成的——Node 侧**零 SQLite 依赖**，因此必须能调用 Python。
 
-> **0.2.2 起脚本随扩展内置**：`qa_query.py` / `db.py` / `memory_guard.py` /
-> `memory_recall.py` / `agent_log_hook.py` 五个脚本打包时由 `sync-vendor.js` 从 skill
-> 仓库 `../scripts/` 自动同步（单一真源仍在 skill 仓库），装在扩展的 `scripts/` 里。
+> **0.2.2 起脚本随扩展内置**：`qa_query.py` / `qa_tool.py` / `stdin_io.py` / `db.py` /
+> `memory_health.py` / `memory_guard.py` / `memory_recall.py` / `agent_log_hook.py`
+> 八个脚本（`qa_query.py` 的完整依赖闭包，tests 有传递闭包扫描回归防遗漏）打包时由
+> `sync-vendor.js` 从 skill 仓库 `../scripts/` 自动同步（单一真源仍在 skill 仓库），
+> 装在扩展的 `scripts/` 里。
 > 所以**任何机器只装扩展即可用**，不必另外安装 skill；脚本版本与扩展始终一致，
 > 也不受磁盘上旧版 skill 安装副本影响。
 
