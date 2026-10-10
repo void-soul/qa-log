@@ -18,6 +18,7 @@
 
 | 版本 | 变化 |
 |------|------|
+| **0.2.4** | 「记忆健康」视图行内 QID 可点击，直达该条目的 QA 详情面板（此前只读、需切去 QA 列表再搜 QID） |
 | **0.2.3** | 内置脚本补上 0.2.2 遗漏的 `memory_health.py`、`qa_tool.py`、`stdin_io.py`：「记忆健康」视图报 memory_health module not available、更新状态时 `from qa_tool import` / `No module named 'stdin_io'` 直接失败，一并修复 |
 | **0.2.2** | 扩展自带依赖的 Python 脚本（`scripts/`，打包时由 `sync-vendor.js` 从 skill 仓库自动同步），**只装扩展即可在任何机器上用**，无需另外安装 skill；修复其他电脑「找不到 qa_query.py」报错 |
 | **0.2.1** | 补上扩展图标（media/icon.png），此前后市场与扩展列表显示默认占位方块 |
