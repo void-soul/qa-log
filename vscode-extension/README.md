@@ -18,6 +18,7 @@
 
 | 版本 | 变化 |
 |------|------|
+| **0.2.2** | 扩展自带依赖的 Python 脚本（`scripts/`，打包时由 `sync-vendor.js` 从 skill 仓库自动同步），**只装扩展即可在任何机器上用**，无需另外安装 skill；修复其他电脑「找不到 qa_query.py」报错 |
 | **0.2.1** | 补上扩展图标（media/icon.png），此前后市场与扩展列表显示默认占位方块 |
 | **0.2.0** | 活动栏图标换为单色水獭字形；脚本解析改为按 action 支持性挑选（旧版安装副本会被自动跳过）；配合 skill 侧的 qid 归一化、migrate 命令与旧库升级流程 |
 | 0.1.0 | 首个可用版本：QA 记录 / Agent 日志 / 记忆健康三视图 |
@@ -27,6 +28,12 @@
 
 扩展的**全部读写**（列表、详情、编辑、删除、健康报告、召回）都是启动 `scripts/qa_query.py`
 子进程完成的——Node 侧**零 SQLite 依赖**，因此必须能调用 Python。
+
+> **0.2.2 起脚本随扩展内置**：`qa_query.py` / `db.py` / `memory_guard.py` /
+> `memory_recall.py` / `agent_log_hook.py` 五个脚本打包时由 `sync-vendor.js` 从 skill
+> 仓库 `../scripts/` 自动同步（单一真源仍在 skill 仓库），装在扩展的 `scripts/` 里。
+> 所以**任何机器只装扩展即可用**，不必另外安装 skill；脚本版本与扩展始终一致，
+> 也不受磁盘上旧版 skill 安装副本影响。
 
 | 项目 | 要求 |
 |------|------|
@@ -57,8 +64,8 @@ python <skill>/scripts/qa_query.py --db <项目根>/qa.db stats
 
 ```bash
 cd vscode-extension
-npx --yes @vscode/vsce package --no-dependencies
-# 生成 qa-log-browser-0.1.0.vsix
+npm run package        # prepackage 自动先跑 sync-vendor.js 同步脚本
+# 生成 qa-log-browser-0.2.2.vsix
 ```
 
 然后在 VSCode / CodeBuddy 里：扩展面板 → `...` → **从 VSIX 安装**。
@@ -129,7 +136,7 @@ python <skill>/scripts/setup_hooks.py --remove   # 卸载 hooks
 |------|------|------|
 | `qaLog.pythonPath` | `python` | Python 可执行文件 / 命令。可填 `python`、`py -3` 或**完整路径**（路径含空格也会被正确引用）；**扩展与 hooks 共用此配置**，找不到 `python` 时自动回退 `py -3` |
 | `qaLog.dbPath` | 空 | `qa.db` 路径；留空 = 当前工作区根目录下（或向上 12 层内第一个含 `qa.db` 的目录）的 `qa.db` |
-| `qaLog.scriptPath` | 空 | `qa_query.py` 路径；留空则按 `~/.claude` / `~/.agents` / `~/.codebuddy` 的 skills 目录与工作区 `scripts/` 自动查找（**不会**使用任何硬编码的绝对路径） |
+| `qaLog.scriptPath` | 空 | `qa_query.py` 路径；留空则按 **扩展内置 `scripts/`**（首选）→ `~/.claude` / `~/.agents` / `~/.codebuddy` 的 skills 目录 → 工作区 `scripts/`（仅受信任工作区）自动查找（**不会**使用任何硬编码的绝对路径） |
 
 ## 数据流
 
