@@ -198,9 +198,16 @@ function scriptPath() {
     return explicit;
   }
   const home = os.homedir();
-  // 不要在这里写死本机绝对路径（会让别人的机器探测到一个不存在的盘符路径）；
-  // 找不到时用下面的 qaLog.scriptPath 设置项指定。
+  // 扩展打包时自带依赖脚本的内置副本（sync-vendor.js 从 skill 仓库 ../scripts/ 同步，
+  // 单一真源仍在 skill 仓库）。内置副本放第一位：
+  //   1) 只装扩展即可在任何机器上工作，无需另外安装 skill（修复跨机
+  //      「找不到 qa_query.py」的问题，其他电脑常只有扩展没有 skill）；
+  //   2) 脚本版本与 extension.js 始终一致，不受磁盘上旧版 skill 安装副本影响
+  //      （实测 ~/.claude/skills 那份曾落后 9 个提交）。
+  // 不要写死本机绝对路径（会让别人的机器探测到一个不存在的盘符路径）；
+  // 下面的家目录候选仅在扩展安装损坏时兜底，仍找不到用 qaLog.scriptPath 指定。
   const candidates = [
+    path.join(__dirname, '..', 'scripts', 'qa_query.py'),
     path.join(home, '.claude', 'skills', 'qa-log', 'scripts', 'qa_query.py'),
     path.join(home, '.agents', 'skills', 'qa-log', 'scripts', 'qa_query.py'),
     path.join(home, '.codebuddy', 'skills', 'qa-log', 'scripts', 'qa_query.py'),
@@ -271,7 +278,7 @@ function query(action, extra = [], dbOverride = null) {
 
   if (!fs.existsSync(script)) {
     diag(`ERROR: qa_query.py 不存在: ${script}`);
-    return Promise.reject(new Error(`找不到 qa_query.py（可在设置里指定 qaLog.scriptPath）：${script}`));
+    return Promise.reject(new Error(`找不到 qa_query.py（可在设置里指定 qaLog.scriptPath，或重新安装扩展以恢复内置脚本）：${script}`));
   }
   if (!fs.existsSync(db)) {
     diag(`ERROR: 数据库不存在: ${db}`);
