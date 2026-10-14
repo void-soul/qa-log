@@ -18,6 +18,7 @@
 
 | 版本 | 变化 |
 |------|------|
+| **0.2.5** | 修复「QA 记录」视图的状态下拉与关键词搜索**从未生效**：虚拟列表把数据源固定在构造那一刻，筛选只改计数不改行；Agent 日志视图的关键词搜索同病一并修好 |
 | **0.2.4** | 「记忆健康」视图行内 QID 可点击，直达该条目的 QA 详情面板（此前只读、需切去 QA 列表再搜 QID） |
 | **0.2.3** | 内置脚本补上 0.2.2 遗漏的 `memory_health.py`、`qa_tool.py`、`stdin_io.py`：「记忆健康」视图报 memory_health module not available、更新状态时 `from qa_tool import` / `No module named 'stdin_io'` 直接失败，一并修复 |
 | **0.2.2** | 扩展自带依赖的 Python 脚本（`scripts/`，打包时由 `sync-vendor.js` 从 skill 仓库自动同步），**只装扩展即可在任何机器上用**，无需另外安装 skill；修复其他电脑「找不到 qa_query.py」报错 |
