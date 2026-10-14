@@ -286,6 +286,15 @@ const COMMON_JS = `
 
     return {
       render() { spacer.style.height = (items.length * ROW_H) + 'px'; visible = null; update(); },
+      // 换数据源的唯一入口：items 是构造时那个闭包参数，外部重新绑定 filtered
+      // 不会影响这里，render() 只会重画旧数组（筛选因此形同虚设）。
+      setItems(next) {
+        items = next;
+        selectedIdx = -1;   // 索引已指向别的条目，旧选中态必须丢掉
+        visible = null;
+        // 数据源变短后旧滚动位置会让 from 越界 → 一行都不画（空白列表）
+        if (container.scrollTop) container.scrollTop = 0;
+      },
       // 空态占位必须写进spacer 内部：直接给 container.innerHTML 赋值会把 spacer
       // 从 DOM 里摘掉，闭包仍持有它 → 之后所有行都渲染进「脱钩」的节点，列表永久空白。
       placeholder(html) {
@@ -397,6 +406,7 @@ function qaListHtml(data, nonce) {
         return [e.qid, e.phenomenon, e.root_cause, e.solution, e.files, e.category]
           .join(' ').toLowerCase().includes(kw);
       });
+      list.setItems(filtered);   // 必须交给列表：只重绑 filtered 不会改变已渲染的数据源
       $('cnt').textContent = filtered.length + ' 条';
       // 空态一律走 virtualList 的 placeholder（写进 spacer 内部）：
       // 给 container.innerHTML 赋值会让 spacer 脱钩，导致清空搜索后列表再也回不来。
@@ -639,6 +649,7 @@ function logListHtml(data, nonce) {
         if (!kw) return true;
         return [l.title, l.content].join(' ').toLowerCase().includes(kw);
       });
+      list.setItems(filtered);   // 与 QA 列表同一个坑：换数据源必须走 setItems
       $('cnt').textContent = filtered.length + ' 条';
       if (!filtered.length && !logs.length) {
         // 明确空：给出诊断线索而不是让人摸不着头脑
